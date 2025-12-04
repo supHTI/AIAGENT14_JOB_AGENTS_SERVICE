@@ -15,7 +15,7 @@ handlers:
         class: logging.FileHandler
         formatter: standard
         level: DEBUG
-        filename: resume_analyzer.log
+        filename: job_agents_service.log
         encoding: utf8
 
 loggers:

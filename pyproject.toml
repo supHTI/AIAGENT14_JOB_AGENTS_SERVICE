@@ -1,0 +1,28 @@
+[project]
+name = "aiagent14-job-agents-service"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "celery>=5.6.0",
+    "email-validator>=2.2.0",
+    "fastapi>=0.116.1",
+    "langchain>=1.1.0",
+    "langchain-core>=1.1.0",
+    "langchain-experimental>=0.4.0",
+    "langchain-google-genai>=3.2.0",
+    "mysql-connector-python>=9.4.0",
+    "pandas>=2.3.3",
+    "pdfkit>=1.0.0",
+    "pillow>=12.0.0",
+    "pydantic-settings>=2.10.1",
+    "pydantic[email]>=2.11.7",
+    "pyjwt>=2.10.1",
+    "pypdf2>=3.0.1",
+    "pyyaml>=6.0.2",
+    "reportlab>=4.4.5",
+    "requests>=2.32.4",
+    "sqlalchemy>=2.0.42",
+    "uvicorn>=0.35.0",
+]

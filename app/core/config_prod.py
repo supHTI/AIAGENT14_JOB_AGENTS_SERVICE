@@ -41,27 +41,31 @@ class Settings(BaseSettings):
         SERVER_PORT (int): Port number for the server
     """
 
+    APP_NAME: str = Field("Job Agent Service", env="APP_NAME")
+    DEBUG: bool = Field(False, env="DEBUG")
+
     GOOGLE_API_KEY: str = Field(..., env="GOOGLE_API_KEY")
-    GOOGLE_MODEL_NAME:str=Field(...,env="GOOGLE_MODEL_NAME")
+    GOOGLE_MODEL_NAME: str = Field(..., env="GOOGLE_MODEL_NAME")
+    JOB_AGENT_LOG: str = Field(..., env="JOB_AGENT_LOG")
+    FILE_HANDLING_API_KEY: str = Field(..., env="FILE_HANDLING_API_KEY")
+    AUTH_SERVICE_URL: str = Field(..., env="AUTH_SERVICE_URL")
+    ACCESS_TOKEN_EXPIRE_HOURS: str = Field(..., env="ACCESS_TOKEN_EXPIRE_HOURS")
+    JWT_SECRET_KEY: str = Field(..., env="JWT_SECRET_KEY")
+    JWT_ALGORITHM: str = Field(..., env="JWT_ALGORITHM")
 
+    DB_HOST: str = Field(..., env="DB_HOST")
+    DB_PORT: str = Field(..., env="DB_PORT")
+    DB_NAME: str = Field(..., env="DB_NAME")
+    DB_USER: str = Field(..., env="DB_USER")
+    DB_PASSWORD: str = Field(..., env="DB_PASSWORD")
+
+    PDFKIT_PATH: str = Field(..., env="PDFKIT_PATH")
+    LOGO_PATH: str = Field(..., env="LOGO_PATH")
     
-
-    RESUME_ANALYZER_LOG:str = Field(...,env="RESUME_ANALYZER_LOG")
-    
-    FILE_HANDLING_API_KEY:str = Field(..., env="FILE_HANDLING_API_KEY")
-    AUTH_SERVICE_URL:str = Field(..., env="AUTH_SERVICE_URL")
-    ACCESS_TOKEN_EXPIRE_HOURS:str = Field(..., env="ACCESS_TOKEN_EXPIRE_HOURS")
-    JWT_SECRET_KEY:str = Field(..., env="JWT_SECRET_KEY")
-    JWT_ALGORITHM:str = Field(..., env="JWT_ALGORITHM")
-
-    DB_HOST:str = Field(..., env="DB_HOST")
-    DB_PORT:str = Field(..., env="DB_PORT")
-    DB_NAME:str = Field(..., env="DB_NAME")
-    DB_USER:str = Field(..., env="DB_USER")
-    DB_PASSWORD:str = Field(..., env="DB_PASSWORD")
-
-    PDFKIT_PATH:str = Field(..., env="PDFKIT_PATH")
-    LOGO_PATH:str = Field(..., env="LOGO_PATH")
+    REDIS_HOST: str = Field(..., env="REDIS_HOST")
+    REDIS_PORT: str = Field(..., env="REDIS_PORT")
+    REDIS_DB: str = Field(..., env="REDIS_DB")
+    REDIS_PASSWORD: str = Field(..., env="REDIS_PASSWORD")
 
     @property
     def DB_URI(self) -> str:

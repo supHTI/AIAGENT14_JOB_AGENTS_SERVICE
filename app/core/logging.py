@@ -85,7 +85,7 @@ def setup_logging(
         os.makedirs(log_dir, exist_ok=True)
 
         # Define the log file's full path
-        log_file_path = os.path.join(log_dir, "resume_analyzer.log")
+        log_file_path = os.path.join(log_dir, "job_agents_service.log")
 
         # Load YAML configuration
         path = Path(default_path)

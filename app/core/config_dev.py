@@ -49,8 +49,8 @@ class Settings(BaseSettings):
         logger.info("GOOGLE_API_KEY Retrieved")
         GOOGLE_MODEL_NAME:str=os.getenv('GOOGLE_MODEL_NAME')
         logger.info("GOOGLE_MODEL_NAME Retrieved")
-        RESUME_ANALYZER_LOG:str=os.getenv('RESUME_ANALYZER_LOG')
-        logger.info("RESUME_ANALYZER_LOG Retrieved")
+        JOB_AGENT_LOG:str=os.getenv('JOB_AGENT_LOG')
+        logger.info("JOB_AGENT_LOG Retrieved")
         FILE_HANDLING_API_KEY:str=os.getenv('FILE_HANDLING_API_KEY')
         logger.info("FILE_HANDLING_API_KEY Retrieved")
         
@@ -80,6 +80,15 @@ class Settings(BaseSettings):
 
         LOGO_PATH:str=os.getenv('LOGO_PATH')
         logger.info("LOGO_PATH Retrieved")
+        
+        REDIS_HOST: str = os.getenv('REDIS_HOST')
+        logger.info("REDIS_HOST Retrieved")
+        REDIS_PORT: str = os.getenv('REDIS_PORT')
+        logger.info("REDIS_PORT Retrieved")
+        REDIS_DB: str = os.getenv('REDIS_DB')
+        logger.info("REDIS_DB Retrieved")
+        REDIS_PASSWORD: str = os.getenv('REDIS_PASSWORD')
+        logger.info("REDIS_PASSWORD Retrieved")
 
         @property
         def DB_URI(self) -> str:
