@@ -64,7 +64,11 @@ class ContextFilter(logging.Filter):
 def setup_logging(
     default_path='logging.yaml',
     default_level=logging.DEBUG,
+<<<<<<< HEAD
     log_dir=settings.JOB_AGENT_LOG 
+=======
+    log_dir=settings.JOB_AGENT_LOG
+>>>>>>> e1ae38068292b9973f5d71e6a07a03400c044a99
 ):
     """
     Sets up logging configuration for the application.

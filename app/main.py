@@ -37,6 +37,7 @@ FastAPI application for resume parsing service using Gemini AI.
 """
 
 from fastapi import FastAPI
+from app.api import test_api_router, job_post_router, websocket_router, file_router, pdf_router
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.endpoints.job_agent_api import router as job_agent_router
 import logging
@@ -64,22 +65,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(job_agent_router, prefix="/api/v1")
+# Include API routers
+app.include_router(test_api_router)
+app.include_router(job_post_router)
+app.include_router(websocket_router)
+app.include_router(file_router)
+app.include_router(pdf_router)
 
-@app.get("/")
-def root():
-    """Root endpoint"""
-    return {
-        "service": "Job Agent API",
-        "status": "running",
-        "version": "2.0.0",
-        "endpoint": "/api/v1/job_agent",
-        "documentation": "/docs"
-    }
 
-@app.get("/health")
-def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
+
+
+
 
