@@ -90,6 +90,12 @@ class Settings(BaseSettings):
         REDIS_PASSWORD: str = os.getenv('REDIS_PASSWORD')
         logger.info("REDIS_PASSWORD Retrieved")
 
+        IMAGE_PATH: str = os.getenv('IMAGE_PATH', './uploads/images')
+        logger.info("IMAGE_PATH Retrieved")
+        
+        BASE_URL: str = os.getenv('BASE_URL', 'http://localhost:8000')
+        logger.info("BASE_URL Retrieved")
+
         @property
         def DB_URI(self) -> str:
             encoded_password = quote_plus(self.DB_PASSWORD)

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api import test_api_router
+from app.api import test_api_router, job_post_router, websocket_router, file_router, pdf_router
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
@@ -18,8 +18,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include test API router
+# Include API routers
 app.include_router(test_api_router)
+app.include_router(job_post_router)
+app.include_router(websocket_router)
+app.include_router(file_router)
+app.include_router(pdf_router)
 
 
 

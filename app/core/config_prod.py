@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     REDIS_PORT: str = Field(..., env="REDIS_PORT")
     REDIS_DB: str = Field(..., env="REDIS_DB")
     REDIS_PASSWORD: str = Field(..., env="REDIS_PASSWORD")
+    
+    IMAGE_PATH: str = Field(..., env="IMAGE_PATH")
+    BASE_URL: str = Field(..., env="BASE_URL")
 
     @property
     def DB_URI(self) -> str:
