@@ -86,7 +86,7 @@ async def job_agent(
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
-        redis_client.setex(f"task_status:{task_id}", 3600, json.dumps(initial_status))
+        redis_client.setex(f"task:{task_id}", 3600, json.dumps(initial_status))
         redis_client.publish(f"task_status_updates:{task_id}", json.dumps(initial_status))
 
         logger.info(f"[REDIS] Initial status stored for {task_id}")
@@ -149,7 +149,8 @@ def get_job_agent_result(task_id: str):
     redis = get_redis_client()
 
     # Check task processing status from Redis
-    redis_status = redis.get(f"task_status:{task_id}")
+    redis_status = redis.get(f"task:{task_id}")
+    
     status_data = json.loads(redis_status) if redis_status else None
 
     if not status_data:

@@ -27,7 +27,7 @@ except Exception as e:
     logger.error(f"Redis initialization error: {e}")
     r = None
 
-def report_progress(task_id: str, status: str, percent: int, message: str = "", jd: str = None, error: str = None):
+def report_progress(task_id: str, status: str, progress: int, message: str = "", task_type: str = "Job_Agent", error: str = None):
     """
     Store task progress in Redis as JSON with error handling.
     """
@@ -35,16 +35,16 @@ def report_progress(task_id: str, status: str, percent: int, message: str = "", 
         logger.error("Invalid task_id provided to report_progress")
         return False
         
-    if not isinstance(percent, int) or percent < 0 or percent > 100:
-        logger.error(f"Invalid percent value: {percent}")
+    if not isinstance(progress, int) or progress < 0 or progress > 100:
+        logger.error(f"Invalid percent value: {progress}")
         return False
 
     data = {
         "task_id": task_id,
         "status": status,
-        "progress": percent,
+        "progress": progress,
         "message": message or "",
-        "jd": jd,
+        "type": task_type,
         "error": error,
         "updated_at": datetime.utcnow().isoformat()
     }
@@ -55,7 +55,7 @@ def report_progress(task_id: str, status: str, percent: int, message: str = "", 
             return False
             
         r.set(f"task:{task_id}", json.dumps(data), ex=3600)  # Expire after 1 hour
-        logger.debug(f"Progress stored for task {task_id}: {status} - {percent}%")
+        logger.debug(f"Progress stored for task {task_id}: {status} - {progress}%")
         return True
         
     except redis.RedisError as e:
