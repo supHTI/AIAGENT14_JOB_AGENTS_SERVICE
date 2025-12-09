@@ -70,6 +70,18 @@ class Settings(BaseSettings):
     IMAGE_PATH: str = Field(..., env="IMAGE_PATH")
     BASE_URL: str = Field(..., env="BASE_URL")
 
+    # Reporting configuration
+    REPORT_DEFAULT_TZ: str = Field("UTC", env="REPORT_DEFAULT_TZ")
+    REPORT_EMAIL_FROM: str = Field(default_factory=lambda: os.getenv("SMTP_EMAIL", "eyeai@htinfosystems.com"), env="REPORT_EMAIL_FROM")
+    REPORT_EMAIL_FROM_NAME: str = Field("EyeAI Reports", env="REPORT_EMAIL_FROM_NAME")
+
+    # SMTP configuration for report delivery
+    SMTP_SERVER: str = Field("", env="SMTP_SERVER")
+    SMTP_PORT: int = Field(587, env="SMTP_PORT")
+    SMTP_EMAIL: str | None = Field("", env="SMTP_EMAIL")
+    SMTP_PASSWORD: str | None = Field("", env="SMTP_PASSWORD")
+    SMTP_USE_TLS: bool = Field(True, env="SMTP_USE_TLS")
+
     @property
     def DB_URI(self) -> str:
         encoded_password = quote_plus(self.DB_PASSWORD)

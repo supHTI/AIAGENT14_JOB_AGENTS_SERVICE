@@ -1,5 +1,16 @@
 from fastapi import FastAPI
-from app.api import test_api_router, job_post_router, websocket_router, file_router, pdf_router
+from app.api import (
+    test_api_router,
+    job_post_router,
+    websocket_router,
+    file_router,
+    pdf_router,
+    jobs_report_router,
+    recruiters_report_router,
+    pipeline_report_router,
+    clawback_report_router,
+    exports_report_router,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
@@ -24,6 +35,11 @@ app.include_router(job_post_router)
 app.include_router(websocket_router)
 app.include_router(file_router)
 app.include_router(pdf_router)
+app.include_router(jobs_report_router)
+app.include_router(recruiters_report_router)
+app.include_router(pipeline_report_router)
+app.include_router(clawback_report_router)
+app.include_router(exports_report_router)
 
 
 

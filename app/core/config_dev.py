@@ -96,6 +96,18 @@ class Settings(BaseSettings):
         BASE_URL: str = os.getenv('BASE_URL', 'http://localhost:8000')
         logger.info("BASE_URL Retrieved")
 
+        # Reporting configuration
+        REPORT_DEFAULT_TZ: str = os.getenv('REPORT_DEFAULT_TZ', 'UTC')
+        REPORT_EMAIL_FROM: str = os.getenv('REPORT_EMAIL_FROM', os.getenv('SMTP_EMAIL', ''))
+        REPORT_EMAIL_FROM_NAME: str = os.getenv('REPORT_EMAIL_FROM_NAME', 'Job Agent Reports')
+
+        # SMTP configuration for report delivery
+        SMTP_SERVER: str = os.getenv('SMTP_SERVER', '')
+        SMTP_PORT: int = int(os.getenv('SMTP_PORT', 587))
+        SMTP_EMAIL: str | None = os.getenv('SMTP_EMAIL', '')
+        SMTP_PASSWORD: str | None = os.getenv('SMTP_PASSWORD', '')
+        SMTP_USE_TLS: bool = os.getenv('SMTP_USE_TLS', 'true').lower() == 'true'
+
         @property
         def DB_URI(self) -> str:
             encoded_password = quote_plus(self.DB_PASSWORD)
