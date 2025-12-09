@@ -22,7 +22,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from fastapi import HTTPException
 
 from app.core import settings
-from app.prompt_template.job_agent_template import job_agent_template
+from app.prompt_templates.job_agent_template import job_agent_template
 
 logger = logging.getLogger("app_logger")
 
@@ -47,12 +47,12 @@ class Resume_Extractor_Agent:
         """
         try:
             self.llm = ChatGoogleGenerativeAI(
-                model=settings.GEMINI_MODEL_NAME,
+                model=settings.GOOGLE_MODEL_NAME,
                 verbose=False,
                 temperature=0.1,
-                google_api_key=settings.GEMINI_API_KEY
+                google_api_key=settings.GOOGLE_API_KEY
             )
-            logger.info(f"LLM initialized successfully: {settings.GEMINI_MODEL_NAME}")
+            logger.info(f"LLM initialized successfully: {settings.GOOGLE_MODEL_NAME}")
         except Exception as e:
             logger.error(f"Failed to initialize LLM: {e}")
             raise ValueError("LLM Configuration failed")

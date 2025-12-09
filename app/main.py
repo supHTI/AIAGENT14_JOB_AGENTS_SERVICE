@@ -1,35 +1,3 @@
-# # from app.api.endpoints import test_api_router
-# from fastapi.middleware.cors import CORSMiddleware
-# from fastapi import FastAPI, APIRouter
-# from app.api.endpoints import job_agents_api
-
-# app = FastAPI(
-#     title="Job Agent Service",
-#     version="1.0.0",
-#     description="Job Agent Service API",
-#     docs_url="/model/api/docs"
-# )
-# # Configure CORS middleware to allow cross-origin requests
-# origins = ["*"]  # Allow requests from all origins
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=origins,
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
-# # Include test API router
-# # app.include_router(test_api_router)
-
-
-# # Set up resume analyzer router
-# job_agents = APIRouter()
-# job_agents.include_router(job_agents_api.router)
-
-
-
-
 """
 Job Agent Main Application
 
@@ -37,7 +5,13 @@ FastAPI application for resume parsing service using Gemini AI.
 """
 
 from fastapi import FastAPI
-from app.api import test_api_router, job_post_router, websocket_router, file_router, pdf_router
+# Import routers explicitly to avoid importing app.api package which
+# may perform eager imports and cause circular dependencies.
+from app.api.endpoints.test_api import router as test_api_router
+from app.api.endpoints.job_post_api import router as job_post_router
+from app.api.endpoints.websocket_api import router as websocket_router
+from app.api.endpoints.file_api import router as file_router
+from app.api.endpoints.pdf_api import router as pdf_router
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.endpoints.job_agent_api import router as job_agent_router
 import logging
@@ -71,6 +45,7 @@ app.include_router(job_post_router)
 app.include_router(websocket_router)
 app.include_router(file_router)
 app.include_router(pdf_router)
+app.include_router(job_agent_router)
 
 
 

@@ -5,7 +5,6 @@ This module contains the prompt template for extracting structured
 information from resume data using AI.
 """
 
-# from langchain.prompts import PromptTemplate
 from langchain_core.prompts import PromptTemplate
 
 
@@ -44,7 +43,7 @@ Instructions:
 
 Output Format:
 Return ONLY a valid JSON object in this exact structure:
-{
+{{
     "candidate_name": "Full name of the candidate",
     "email": "Email address",
     "phone": "Phone number",
@@ -52,25 +51,24 @@ Return ONLY a valid JSON object in this exact structure:
     "skills": ["skill1", "skill2", "skill3"],
     "experience_years": 5.5,
     "education": [
-        {
+        {{
             "degree": "Degree name",
             "institution": "Institution name",
             "year": "Year of completion",
             "grade": "CGPA/Percentage"
-        }
+        }}
     ],
     "work_experience": [
-        {
+        {{
             "title": "Job title",
             "company": "Company name",
             "duration": "Duration (e.g., Jan 2020 - Dec 2023)",
             "responsibilities": ["responsibility1", "responsibility2"]
-        }
+        }}
     ],
     "certifications": ["certification1", "certification2"],
-    "languages": ["language1", "language2"],
-    "summary": "Professional summary in 2-3 sentences"
-}
+    "languages": ["language1", "language2"]
+}}
 
 Critical Rules:
 - Return ONLY the JSON object
