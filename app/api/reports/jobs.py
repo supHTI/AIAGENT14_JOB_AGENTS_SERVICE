@@ -22,7 +22,9 @@ from app.services.emailer import send_report_email
 from app.services import email_templates
 from app.api.deps.auth import require_report_admin
 from app.api.deps.reports import parse_date_filters
-from app.api.deps.auth import get_user_email
+from app.api.deps.auth import get_user_email, validate_token
+
+from app.database_layer.db_model import User
 
 router = APIRouter(prefix="/reports/jobs", tags=["reports:jobs"], dependencies=[Depends(require_report_admin)])
 
@@ -33,6 +35,7 @@ def jobs_overview(
     export_format: ExportFormat = Query(ExportFormat.pdf, description="xlsx|pdf"),
     filters = Depends(parse_date_filters),
     recipient: str = Depends(get_user_email),
+    user: User = Depends(validate_token),
     db: Session = Depends(get_db),
 ):
     payload = build_jobs_overview_report(db, filters)
@@ -41,11 +44,13 @@ def jobs_overview(
 
     if export_format == ExportFormat.pdf:
         content = export_jobs_overview_pdf(
-            "Jobs Overview Report",
+            "High Tech Infosystems Jobs Overview Report",
             payload["summary_tiles"],
             payload["positions_at_risk"],
             payload["charts"],
             payload["table"],
+            generated_by=user.name,
+            date_range=(filters.date_from, filters.date_to),
         )
         filename = f"{base_name}.pdf"
         mime = "application/pdf"
@@ -81,6 +86,7 @@ def job_details(
     export_format: ExportFormat = Query(ExportFormat.pdf, description="xlsx|pdf"),
     filters = Depends(parse_date_filters),
     recipient: str = Depends(get_user_email),
+    user: User = Depends(validate_token),
     db: Session = Depends(get_db),
 ):
     try:
@@ -88,9 +94,11 @@ def job_details(
     except ValueError:
         raise HTTPException(status_code=404, detail="Job not found")
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M")
-    safe_title = str(payload["summary_tiles"][1][1]).replace(" ", "_")
+    job_metadata = payload.get("job_metadata", {})
+    job_title = job_metadata.get("job_title", f"Job {job_id}")
+    safe_title = job_title.replace(" ", "_")
     base_name = f"{safe_title}_{timestamp}"
-    title = f"Job {job_id} Details"
+    title = f"HTI {job_title} Position Report"
 
     if export_format == ExportFormat.pdf:
         content = export_job_details_pdf(
@@ -102,6 +110,9 @@ def job_details(
             payload["candidate_rows"],
             payload["funnel"],
             payload["extras"],
+            job_metadata=job_metadata,
+            generated_by=user.name if user else "",
+            date_range=(filters.date_from, filters.date_to),
         )
         filename = f"{base_name}.pdf"
         mime = "application/pdf"

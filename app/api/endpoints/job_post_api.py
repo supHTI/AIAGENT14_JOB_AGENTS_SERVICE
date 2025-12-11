@@ -23,8 +23,7 @@ from app.utils.file_storage import (
     validate_image_file, 
     get_file_url
 )
-from app.celery.tasks.job_post_tasks import generate_job_post_task
-from app.celery import celery_app
+from app.celery.tasks import generate_job_post_task
 from app.cache_db.redis_config import get_redis_client
 import logging
 import json

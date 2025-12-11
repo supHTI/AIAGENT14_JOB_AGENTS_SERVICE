@@ -6,10 +6,9 @@ from fastapi import APIRouter, File, UploadFile, Form, HTTPException
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 
-from app.celery.tasks.job_agent_tasks import extract_resume_task
+
 from app.cache_db.redis_config import get_redis_client
-from app.database_layer.db_config import SessionLocal
-from app.database_layer.db_model import TaskLogs
+from app.database_layer import JobAgentResponse
 
 import logging
 import uuid
@@ -18,11 +17,10 @@ import base64
 from datetime import datetime, timezone
 
 logger = logging.getLogger("app_logger")
-
 router = APIRouter(tags=["Job Agent"])
-
+redis_client = get_redis_client()
 IMAGE_EXTENSIONS = {
-    '.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp', '.heic', '.svg'
+    '.jpg', '.jpeg', '.png'
 }
 
 
@@ -33,79 +31,34 @@ def is_image_file(filename: str) -> bool:
 
 
 class JobAgentResponse(BaseModel):
-    success: bool = True
-    data: Dict[str, Any]
+    task_id: str
+    status: str
+    message: str
 
 
 @router.post("/job_agent", response_model=JobAgentResponse)
 async def job_agent(
-    jd_text: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
-    image_train: Optional[bool] = Form(None)
+    jd_text: Optional[str] = Form(None, description="Job description text"),
+    file: Optional[UploadFile] = File(None, description="Job description file"),
+    image_train: Optional[bool] = Form(None, description="Whether to perform OCR on the file")
 ):
     """
     Job Agent Endpoint
     Queues a background task & returns task ID.
     """
+    from app.celery.tasks.job_agent_tasks import job_agent_task
 
     if (not jd_text or not jd_text.strip()) and not file:
         raise HTTPException(400, "Either jd_text or file must be provided.")
-
-   
-    task_id = str(uuid.uuid4())
-
-    db = SessionLocal()
-    try:
-        new_log = TaskLogs(
-            task_id=task_id,
-            type="JOB_AGENT",
-            key_id=None,
-            status="STARTED",          
-            error=None
-        )
-        db.add(new_log)
-        db.commit()
-        db.refresh(new_log)
-        logger.info(f"[DB] TaskLogs created for {task_id}")
-
-    except Exception as e:
-        logger.error(f"[DB ERROR] Could not insert TaskLogs: {e}", exc_info=True)
-
-    finally:
-        db.close()
-
-    try:
-        redis_client = get_redis_client()
-
-        initial_status = {
-            "task_id": task_id,
-            "status": "PENDING",
-            "progress": 0,
-            "message": "Task queued, waiting to start",
-            "step": "queued",
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-
-        redis_client.setex(f"task:{task_id}", 3600, json.dumps(initial_status))
-        redis_client.publish(f"task_status_updates:{task_id}", json.dumps(initial_status))
-
-        logger.info(f"[REDIS] Initial status stored for {task_id}")
-
-    except Exception as e:
-        logger.error(f"[REDIS ERROR] Could not set initial status: {e}")
-
-
-    task_data = {
-        "task_id": task_id,
-        "jd_text": jd_text.strip() if jd_text else "",
-    }
+    
 
     if file:
         file_bytes = await file.read()
 
         if not file_bytes:
             raise HTTPException(400, "Uploaded file is empty.")
-
+        
+        #Check if the file is an image
         is_img = is_image_file(file.filename)
 
         # Auto-enable image OCR
@@ -114,43 +67,48 @@ async def job_agent(
         elif image_train is None:
             image_train = False
 
+        #Encode the file to base64
         file_b64 = base64.b64encode(file_bytes).decode("utf-8")
-
-        task_data.update({
+        
+        #Prepare the task data
+        task_data = {
             "file_content_b64": file_b64,
             "filename": file.filename,
             "image_train": bool(image_train)
-        })
+        }
 
         logger.info(f"[FILE] Processing: {file.filename}, OCR={image_train}")
+    else:
+        task_data = {
+            "jd_text": jd_text
+        }
 
 
     try:
-        extract_resume_task.delay(task_data)
-        logger.info(f"[CELERY] Task queued: {task_id}")
+        task = job_agent_task.delay(task_data)
 
+        logger.info(f"[CELERY] Task queued: {task.id}")
+
+    except HTTPException as e:
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
     except Exception as e:
         logger.error(f"[CELERY ERROR] Failed to queue task: {e}")
-        raise HTTPException(500, "Failed to queue extraction task")
+        raise e
 
    
     return JobAgentResponse(
-        success=True,
-        data={
-            "task_id": task_id,
-            "status": "PENDING",
-            "filename": file.filename if file else None
-        }
+        task_id=task.id,
+        status="pending",
+        message="Task queued successfully"
     )
 
 @router.get("/job_agent/result/{task_id}")
 def get_job_agent_result(task_id: str):
 
-    redis = get_redis_client()
-
-    # Check task processing status from Redis
-    redis_status = redis.get(f"task:{task_id}")
     
+
+    # Check task processing status from Redis (set by report_progress)
+    redis_status = redis_client.get(f"task:{task_id}")
     status_data = json.loads(redis_status) if redis_status else None
 
     if not status_data:
@@ -166,8 +124,8 @@ def get_job_agent_result(task_id: str):
                 "task_id": task_id,
                 "status": state,
                 "progress": status_data.get("progress"),
-                "message": status_data.get("message", "Task is processing")
-            }
+                "message": status_data.get("message", "Task is processing"),
+            },
         }
 
     # POSSIBLE FAILURE
@@ -177,21 +135,22 @@ def get_job_agent_result(task_id: str):
             "data": {
                 "task_id": task_id,
                 "status": state,
-                "error": status_data.get("error", "Unknown error")
-            }
+                "error": status_data.get("error", "Unknown error"),
+            },
         }
 
-    # SUCCESS 
+    # SUCCESS
     if state == "SUCCESS":
-        redis_result = redis.get(f"task_result:{task_id}")
+        # Result stored by job_agent_task
+        redis_result = redis_client.get(f"job_agent_task_result:{task_id}")
         if not redis_result:
             return {
                 "success": False,
                 "data": {
                     "task_id": task_id,
                     "status": "SUCCESS",
-                    "message": "Task finished but result not available yet"
-                }
+                    "message": "Task finished but result not available yet",
+                },
             }
 
         return {
@@ -199,7 +158,7 @@ def get_job_agent_result(task_id: str):
             "data": {
                 "task_id": task_id,
                 "status": "SUCCESS",
-                "result": json.loads(redis_result)
-            }
+                "result": json.loads(redis_result),
+            },
         }
 

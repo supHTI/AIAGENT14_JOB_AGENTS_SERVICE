@@ -27,7 +27,7 @@ except Exception as e:
     logger.error(f"Redis initialization error: {e}")
     r = None
 
-def report_progress(task_id: str, status: str, progress: int, message: str = "", task_type: str = "Job_Agent", error: str = None):
+def report_progress(task_id: str, status: str, progress: int, message: str = "", task_type: str = "job_agent", error: str = None):
     """
     Store task progress in Redis as JSON with error handling.
     """

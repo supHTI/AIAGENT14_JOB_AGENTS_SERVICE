@@ -22,12 +22,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from fastapi import HTTPException
 
 from app.core import settings
-from app.prompt_templates.job_agent_template import job_agent_template
+from app.prompt_templates import job_agent_template
 
 logger = logging.getLogger("app_logger")
 
 
-class Resume_Extractor_Agent:
+class Job_Agent:
     """
     A class for extracting structured information from resumes using AI.
 
@@ -57,12 +57,11 @@ class Resume_Extractor_Agent:
             logger.error(f"Failed to initialize LLM: {e}")
             raise ValueError("LLM Configuration failed")
     
-    def extract_resume_data(self, resume_data: str, jd_text: str) -> dict:
+    def extract_job_data(self, jd_text: str) -> dict:
         """
         Extract structured information from resume data.
 
         Args:
-            resume_data: Raw text extracted from resume file (langchain_doc format)
             jd_text: Job description text for context
 
         Returns:
@@ -79,13 +78,12 @@ class Resume_Extractor_Agent:
             
             # Prepare input data
             input_data = {
-                "resume_data": resume_data,
                 "jd_text": jd_text
             }
             
             # Create chain and invoke LLM
             chain = prompt | self.llm
-            logger.info("Invoking Gemini AI for resume extraction...")
+            logger.info("Invoking Gemini AI for job agent...")
             output = chain.invoke(input_data)
             
             logger.info(f"Gemini AI response received")
@@ -105,7 +103,7 @@ class Resume_Extractor_Agent:
             
             # Parse JSON
             extracted_data = json.loads(result_text)
-            logger.info("Resume data extracted and parsed successfully")
+            logger.info("Job agent data extracted and parsed successfully")
             
             return extracted_data
 
@@ -114,9 +112,9 @@ class Resume_Extractor_Agent:
             logger.error(f"Response text (first 500 chars): {output.content[:500]}")
             raise HTTPException(status_code=500, detail="Failed to parse AI response as JSON")
         except Exception as e:
-            logger.error(f"Resume extraction error: {e}")
+            logger.error(f"Job agent extraction error: {e}")
             raise HTTPException(status_code=500, detail=f"Agent failed to extract data: {str(e)}")
 
 
 # Initialize the agent
-resume_extractor_agent = Resume_Extractor_Agent()
+job_agent = Job_Agent()

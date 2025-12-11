@@ -8,7 +8,7 @@ Version: 1.0
 Last Modified: [2024-12-19]
 """
 
-from app.celery import celery_app
+from app.celery.celery_config import celery_app
 from app.database_layer.db_config import SessionLocal
 from app.database_layer.db_model import JobPosts, JobOpenings, Company
 from app.models.gemini_model import configure_gemini_model
@@ -70,7 +70,7 @@ def update_task_status(task_id: str, status: str, progress: int, message: str = 
     except Exception as e:
         logger.error(f"Error updating task status: {e}", exc_info=True)
 
-@celery_app.task(bind=True, name="generate_job_post_task")
+@celery_app.task(bind=True, name="generate_job_post_task", queue="job_queue")
 def generate_job_post_task(self, task_data: dict):
     """
     Generate job post HTML in background.

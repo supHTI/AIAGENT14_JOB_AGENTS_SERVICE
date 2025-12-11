@@ -45,6 +45,14 @@ celery_app.conf.update(
     # Thread pool configuration for 4 workers
     worker_pool="threads",
     worker_concurrency=4,
+    # Route everything to the single job queue
+    task_default_queue="job_queue",
+    task_queues={
+        "job_queue": {
+            "exchange": "job_queue",
+            "routing_key": "job_queue",
+        }
+    },
 )
 
 logger.info("Celery app configured successfully")

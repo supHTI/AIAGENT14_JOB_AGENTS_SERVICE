@@ -33,7 +33,7 @@ app = FastAPI(
     title="Job Agent - Resume Parser",
     description="AI-powered resume extraction service using Gemini 2.0",
     version="2.0.0",
-    docs_url="/docs",
+    docs_url="/model/api/docs",
     redoc_url="/redoc"
 )
 
@@ -47,6 +47,7 @@ app.add_middleware(
 )
 
 # Include API routers
+app.include_router(job_agent_router)
 app.include_router(test_api_router)
 app.include_router(job_post_router)
 app.include_router(websocket_router)

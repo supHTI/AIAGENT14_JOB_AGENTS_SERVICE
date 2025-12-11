@@ -16,7 +16,7 @@ logger = logging.getLogger("app_logger")
 class FileHandler:
     
     @staticmethod
-    def extract_text(file_bytes: bytes, filename: str, perform_ocr: bool) -> str:
+    def extract_text(file_content_b64: str, filename: str, perform_ocr: bool, task_id: str) -> str:
         """
         Extract text from file using file handling API.
 
@@ -31,10 +31,9 @@ class FileHandler:
         start_time = time.time()
 
         try:
-            # Encode file bytes to base64
-            file_content_b64 = base64.b64encode(file_bytes).decode('utf-8')
-            
-            # Prepare JSON payload
+            # Local import to avoid circular dependency during module import
+            from app.api.dependencies.progress import report_progress
+
             payload = {
                 "file": file_content_b64,
                 "base64": True,
@@ -45,6 +44,7 @@ class FileHandler:
             payload["filename"] = filename
 
             logger.info(f"Calling file handler API for: {filename}, OCR: {perform_ocr} (base64 mode)")
+            report_progress(task_id, "PROGRESS", 50, "Extracting file data")
             
             response = requests.post(
                 settings.FILE_HANDLING_API_KEY,
@@ -56,6 +56,7 @@ class FileHandler:
             
             # Log the full response for debugging
             logger.info(f"File handler API full response: {result}")
+            report_progress(task_id, "PROGRESS", 65, "File data extracted")
 
             # Extract text from documents' page_content
             raw_text_parts = []
@@ -76,13 +77,13 @@ class FileHandler:
                     result.get("langchain_doc") or
                     ""
                 ).strip()
-
+            report_progress(task_id, "PROGRESS", 67, "Text extracted from file")
             if not raw_text:
                 raise ValueError("No text extracted from file")
 
             processing_time = int((time.time() - start_time) * 1000)
             logger.info(f"Text extracted successfully in {processing_time}ms, Length: {len(raw_text)} chars")
-
+            report_progress(task_id, "PROGRESS", 70, "Text extracted successfully")
             return raw_text
 
         except requests.RequestException as e:
@@ -91,3 +92,5 @@ class FileHandler:
         except Exception as e:
             logger.error(f"File extraction failed: {e}")
             raise HTTPException(status_code=400, detail=f"Failed to extract text: {str(e)}")
+        
+file_handler = FileHandler()
