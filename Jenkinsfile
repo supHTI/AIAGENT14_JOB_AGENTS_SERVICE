@@ -58,6 +58,12 @@ pipeline {
           env.LOGO_PATH  = ""
           env.IMAGE_FILE_PATH  = "/home/supriyo/ai_agents_qa/IMAGES"
           env.NETWORK    = networkMap[env.APP_ENV]
+          env.PDFKIT_PATH = ''
+          env.BASE_URL = ''
+          env.REDIS_DB = 0
+          env.REDIS_PASSWORD = ""
+          env.GEMINI_MODEL_NAME = "gemini-2.5-flash"
+          env.ACCESS_TOKEN_EXPIRE_HOURS = 24
         }
       }
     }
@@ -140,25 +146,25 @@ pipeline {
                 -e CELERY_LOGLEVEL=debug \\
                 -e CELERY_CONCURRENCY=4 \\
                 -e GOOGLE_API_KEY=$GOOGLE_API_KEY \\
-                -e GOOGLE_MODEL_NAME="gemini-2.5-flash" \\
+                -e GOOGLE_MODEL_NAME=${GEMINI_MODEL_NAME} \\
                 -e JOB_AGENT_LOG=${LOG_PATH} \\
                 -e FILE_HANDLING_API_KEY=${FILE_PATH} \\
                 -e AUTH_SERVICE_URL=$AUTH_SERVICE_URL \\
-                -e ACCESS_TOKEN_EXPIRE_HOURS=24 \\
+                -e ACCESS_TOKEN_EXPIRE_HOURS=${ACCESS_TOKEN_EXPIRE_HOURS} \\
                 -e JWT_SECRET_KEY=$JWT_SECRET_KEY \\
-                -e JWT_ALGORITHM="HS256" \\
+                -e JWT_ALGORITHM=HS256 \\
                 -e DB_HOST=$DB_HOST \\
                 -e DB_PORT=$DB_PORT \\
                 -e DB_NAME=$DB_NAME \\
                 -e DB_USER=$DB_USER \\
                 -e DB_PASSWORD=$DB_PASSWORD \\
-                -e PDFKIT_PATH="" \\
+                -e PDFKIT_PATH=${PDFKIT_PATH} \\
                 -e IMAGE_PATH=${IMAGE_FILE_PATH} \\
                 -e REDIS_HOST=$REDIS_HOST \\
                 -e REDIS_PORT=$REDIS_PORT \\
-                -e REDIS_DB=0 \\
-                -e REDIS_PASSWORD="" \\
-                -e BASE_URL="" \\
+                -e REDIS_DB=${REDIS_DB} \\
+                -e REDIS_PASSWORD=${REDIS_PASSWORD} \\
+                -e BASE_URL=${BASE_URL} \\
                 -e SMTP_SERVER=$SMTP_SERVER \\
                 -e SMTP_PORT=$SMTP_PORT \\
                 -e SMTP_EMAIL=$SMTP_EMAIL \\
