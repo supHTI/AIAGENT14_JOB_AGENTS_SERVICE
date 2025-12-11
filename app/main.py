@@ -5,13 +5,20 @@ FastAPI application for resume parsing service using Gemini AI.
 """
 
 from fastapi import FastAPI
-# Import routers explicitly to avoid importing app.api package which
-# may perform eager imports and cause circular dependencies.
-from app.api.endpoints.test_api import router as test_api_router
-from app.api.endpoints.job_post_api import router as job_post_router
-from app.api.endpoints.websocket_api import router as websocket_router
-from app.api.endpoints.file_api import router as file_router
-from app.api.endpoints.pdf_api import router as pdf_router
+
+from app.api import (
+    test_api_router,
+    job_post_router,
+    websocket_router,
+    file_router,
+    pdf_router,
+    jobs_report_router,
+    recruiters_report_router,
+    pipeline_report_router,
+    clawback_report_router,
+    exports_report_router,
+)
+
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.endpoints.job_agent_api import router as job_agent_router
 import logging
@@ -45,7 +52,13 @@ app.include_router(job_post_router)
 app.include_router(websocket_router)
 app.include_router(file_router)
 app.include_router(pdf_router)
-app.include_router(job_agent_router)
+
+app.include_router(jobs_report_router)
+app.include_router(recruiters_report_router)
+app.include_router(pipeline_report_router)
+app.include_router(clawback_report_router)
+app.include_router(exports_report_router)
+
 
 
 
