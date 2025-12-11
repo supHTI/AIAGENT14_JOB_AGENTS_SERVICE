@@ -55,14 +55,14 @@ pipeline {
           // Log path fixed per request; adjust map if enabling other envs
           env.LOG_PATH   = "/home/supriyo/ai_agents_qa/LOGS"
           env.FILE_PATH  = "/home/supriyo/ai_agents_qa/FILES"
-          env.LOGO_PATH  = ""
+          env.LOGO_PATH  = ''
           env.IMAGE_FILE_PATH  = "/home/supriyo/ai_agents_qa/IMAGES"
           env.NETWORK    = networkMap[env.APP_ENV]
           env.PDFKIT_PATH = ''
           env.BASE_URL = ''
           env.REDIS_DB = 0
-          env.REDIS_PASSWORD = ""
-          env.GEMINI_MODEL_NAME = "gemini-2.5-flash"
+          env.REDIS_PASSWORD = ''
+          env.GEMINI_MODEL_NAME = 'gemini-2.5-flash'
           env.ACCESS_TOKEN_EXPIRE_HOURS = 24
         }
       }
