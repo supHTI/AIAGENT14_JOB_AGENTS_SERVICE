@@ -148,7 +148,7 @@ pipeline {
                 -e GOOGLE_API_KEY=$GOOGLE_API_KEY \\
                 -e GOOGLE_MODEL_NAME=${GEMINI_MODEL_NAME} \\
                 -e JOB_AGENT_LOG=${LOG_PATH} \\
-                -e FILE_HANDLING_API_KEY=${FILE_PATH} \\
+                -e FILE_HANDLING_API_KEY=${FILE_HANDLING_API_KEY} \\
                 -e AUTH_SERVICE_URL=$AUTH_SERVICE_URL \\
                 -e ACCESS_TOKEN_EXPIRE_HOURS=${ACCESS_TOKEN_EXPIRE_HOURS} \\
                 -e JWT_SECRET_KEY=$JWT_SECRET_KEY \\
