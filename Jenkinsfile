@@ -50,8 +50,8 @@ pipeline {
           def portMap = [dev: '8410', qa: '8510', prod: '8610']
           def networkMap = [dev: 'ats-dev-network', qa: 'ats-qa-network', prod: 'ats-prod-network']
           env.APP_PORT   = portMap[env.APP_ENV]
-          env.IMAGE_NAME = "ats-agent-file1-service:${env.APP_ENV}"
-          env.CONTAINER  = "ats-agent-file1-${env.APP_ENV}"
+          env.IMAGE_NAME = "ats-agent-job-agents1-service:${env.APP_ENV}"
+          env.CONTAINER  = "ats-agent-job-agents1-${env.APP_ENV}"
           // Log path fixed per request; adjust map if enabling other envs
           env.LOG_PATH   = "/home/supriyo/ai_agents_qa/LOGS"
           env.FILE_PATH  = "/home/supriyo/ai_agents_qa/FILES"
