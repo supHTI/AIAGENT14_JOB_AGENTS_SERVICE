@@ -168,7 +168,7 @@ pipeline {
                 -e SMTP_SERVER=$SMTP_SERVER \\
                 -e SMTP_PORT=$SMTP_PORT \\
                 -e SMTP_EMAIL=$SMTP_EMAIL \\
-                -e SMTP_PASSWORD=$SMTP_PASSWORD \\       
+                -e SMTP_PASSWORD=$SMTP_PASSWORD \\
                 -e LOGO_PATH=${LOGO_PATH} \\
                 -v ${LOG_PATH}:${LOG_PATH} \\
                 -v ${FILE_PATH}:${FILE_PATH} \\
