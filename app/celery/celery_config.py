@@ -19,11 +19,15 @@ logger = logging.getLogger("app_logger")
 redis_url = get_redis_url()
 
 # Create Celery app
+# Include both job_post_tasks and job_agent_tasks so workers register all tasks
 celery_app = Celery(
     "job_agents_service",
     broker=redis_url,
     backend=redis_url,
-    include=["app.celery.tasks.job_post_tasks"]
+    include=[
+        "app.celery.tasks.job_post_tasks",
+        "app.celery.tasks.job_agent_tasks",
+    ],
 )
 
 # Celery configuration

@@ -115,13 +115,6 @@ class Settings(BaseSettings):
             logger.debug(f"Database URI (password masked): {uri.replace(encoded_password, '****')}")
             return uri
 
-
-
-
-
-       
-        
-
         class Config:
             """
             Inner configuration class for Pydantic settings.

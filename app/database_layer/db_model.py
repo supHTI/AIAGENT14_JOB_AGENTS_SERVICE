@@ -262,6 +262,19 @@ class Company(Base):
     created_by_user = relationship("User", foreign_keys=[created_by])
     updated_by_user = relationship("User", foreign_keys=[updated_by])
     deleted_by_user = relationship("User", foreign_keys=[deleted_by])
+    
+    
+    
+class TaskLogs(Base):
+    __tablename__ = "task_logs"
+ 
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(100), nullable=False)
+    type = Column(String(100), nullable=False)
+    key_id = Column(Integer, nullable=True)
+    status = Column(String(50), nullable=True)
+    error = Column(String(250), nullable=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
     spocs = relationship("CompanySpoc", back_populates="company")
 
 
