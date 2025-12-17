@@ -12,6 +12,7 @@ Last Modified: [2024-12-19]
 from celery import Celery
 from app.cache_db.redis_config import get_redis_url
 import logging
+from celery.schedules import crontab
 
 logger = logging.getLogger("app_logger")
 
@@ -27,6 +28,7 @@ celery_app = Celery(
     include=[
         "app.celery.tasks.job_post_tasks",
         "app.celery.tasks.job_agent_tasks",
+        "app.celery.tasks.cooling_period_task",
     ],
 )
 
@@ -52,6 +54,14 @@ celery_app.conf.update(
             "exchange": "job_queue",
             "routing_key": "job_queue",
         }
+    },
+    # 🔥 Daily 08:00 AM IST Scheduler
+    best_schedule={
+        "daily-cooling-period-reminders": {
+            "task": "send_daily_cooling_period_reminders",
+            "schedule": crontab(hour=8, minute=0), # Every 24 hours
+            "options": {"queue": "job_queue"},
+        },
     },
 )
 

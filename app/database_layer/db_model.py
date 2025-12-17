@@ -79,6 +79,18 @@ class UserJobsAssigned(Base):
     user = relationship("User", foreign_keys=[user_id])
     logger.info("UserJobsAssigned model configured successfully")
 
+class NotificationUser(Base):
+    __tablename__ = "notification_users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_by = Column(Integer, nullable=False)
+
+    user = relationship("User", backref="notification_users")
+
+
+
 class Session(Base):
     """Session model for tracking user login sessions"""
     __tablename__ = 'sessions'

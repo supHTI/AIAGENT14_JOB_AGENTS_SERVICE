@@ -104,6 +104,169 @@ class EmailService:
         )
         subject = f"Job Assignment: {job_title} - {job_id}"
         return self._send_email(to_email, subject, html_content)
+    
+
+
+
+    def send_cooling_period_reminder(
+        self,
+        to_email: str,
+        recipient_name: str,
+        candidates: list[dict],
+    ) -> bool:
+        """Send email with cooling period reminders for multiple candidates"""
+        # Build candidate rows HTML
+        candidate_rows = ""
+        for idx, candidate in enumerate(candidates, 1):
+            remaining_days = candidate.get('cooling_period_remaining_days', 'N/A')
+            status_color = "#28a745" if remaining_days and remaining_days > 30 else "#ffc107" if remaining_days and remaining_days > 7 else "#dc3545"
+            
+            candidate_rows += f"""
+            <tr>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{idx}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;"><strong>{candidate.get('candidate_name', 'N/A')}</strong></td>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{candidate.get('candidate_email', 'N/A')}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{candidate.get('candidate_phone_number', 'N/A')}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">
+                    <span style="background-color: {status_color}; color: white; padding: 4px 8px; border-radius: 4px; font-weight: 600;">
+                        {remaining_days} days
+                    </span>
+                </td>
+            </tr>
+            """
+        
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cooling Period Reminder</title>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }}
+        .container {{
+            max-width: 900px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }}
+        .header {{
+            background: linear-gradient(90deg, #438efc, #7558e6 47.4%, #be08c7);
+            padding: 30px 20px;
+            text-align: center;
+            color: #ffffff;
+        }}
+        .header h1 {{
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }}
+        .content {{
+            padding: 30px 20px;
+            color: #333333;
+        }}
+        .greeting {{
+            font-size: 18px;
+            color: #438efc;
+            margin-bottom: 20px;
+        }}
+        .message {{
+            font-size: 16px;
+            line-height: 1.6;
+            color: #555555;
+            margin-bottom: 25px;
+        }}
+        .candidate-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }}
+        .candidate-table th {{
+            background-color: #438efc;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }}
+        .candidate-table td {{
+            padding: 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }}
+        .candidate-table tr:hover {{
+            background-color: #f8f9fa;
+        }}
+        .footer {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #666666;
+            border-top: 1px solid #e0e0e0;
+        }}
+        .info-box {{
+            background-color: #e7f3ff;
+            border-left: 4px solid #438efc;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>HTI AI AGENT</h1>
+            <p style="margin: 5px 0 0 0; font-size: 14px;">High Tech Infosystems</p>
+        </div>
+        <div class="content">
+            <div class="greeting">Dear {recipient_name},</div>
+            <div class="message">
+                This is a reminder about candidates in their cooling period that you are managing. 
+                Please review the following candidates and their remaining cooling period days:
+            </div>
+            
+            <div class="info-box">
+                <strong>📋 Total Candidates:</strong> {len(candidates)}
+            </div>
+            
+            <table class="candidate-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Candidate Name</th>
+                        <th>Email</th>
+                        <th>Phone Number</th>
+                        <th>Cooling Period Remaining</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {candidate_rows}
+                </tbody>
+            </table>
+            
+            <div class="message">
+                Please ensure timely follow-up with these candidates as their cooling period progresses.
+            </div>
+        </div>
+        <div class="footer">
+            <p>This is an automated reminder from HTI AI Agent System</p>
+            <p>&copy; 2024 High Tech Infosystems. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+        
+        subject = f"Cooling Period Reminder - {len(candidates)} Candidate(s) Assigned to You"
+        return self._send_email(to_email, subject, html_content)
+
 
 
 def send_report_email(subject: str, html_body: str, to_email: str, attachments: Iterable[Attachment] = ()):
