@@ -48,7 +48,7 @@ def send_daily_cooling_period_reminders(self):
             .join(CandidateJobStatus, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
             .filter(CandidateJobStatus.type == "JOINED")
             .filter(Candidates.assigned_to.isnot(None))  # Only candidates with assigned users
-            .distinct()
+            .distinct(Candidates.candidate_id, Candidates.assigned_to)  # Prevent duplicates
             .all()
         )
         
@@ -56,7 +56,6 @@ def send_daily_cooling_period_reminders(self):
         
         # Group candidates by assigned_to user
         user_candidates = defaultdict(list)
-        seen_candidates = set()  # Track unique candidates per user
         
         for row in joined_candidates_data:
             remaining_days = None
@@ -65,21 +64,15 @@ def send_daily_cooling_period_reminders(self):
                 if remaining_days < 0:
                     remaining_days = 0
             
-            candidate_key = (row.assigned_to, row.candidate_id)
+            candidate_info = {
+                "candidate_id": row.candidate_id,
+                "candidate_name": row.candidate_name,
+                "candidate_email": row.candidate_email,
+                "candidate_phone_number": row.candidate_phone_number,
+                "cooling_period_remaining_days": remaining_days,
+            }
             
-            # Only add if not already seen for this user
-            if candidate_key not in seen_candidates:
-                seen_candidates.add(candidate_key)
-                
-                candidate_info = {
-                    "candidate_id": row.candidate_id,
-                    "candidate_name": row.candidate_name,
-                    "candidate_email": row.candidate_email,
-                    "candidate_phone_number": row.candidate_phone_number,
-                    "cooling_period_remaining_days": remaining_days,
-                }
-                
-                user_candidates[row.assigned_to].append(candidate_info)
+            user_candidates[row.assigned_to].append(candidate_info)
         
         logger.info(f"Grouped candidates for {len(user_candidates)} users")
         

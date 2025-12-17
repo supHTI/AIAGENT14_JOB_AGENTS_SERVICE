@@ -70,12 +70,28 @@ def process_call_audio_task(
     Returns:
         Processing result dictionary
     """
-    from app.utils.audio_preprocessing import preprocess_audio
-    from app.utils.google_stt import transcribe_audio
-    from app.utils.transcript_normalizer import normalize_transcript
-    from app.utils.transcript_chunker import chunk_transcript
-    
     try:
+        # Import utilities with proper error handling
+        try:
+            from app.utils.audio_preprocessing import preprocess_audio
+            from app.utils.google_stt import transcribe_audio
+            from app.utils.transcript_normalizer import normalize_transcript
+            from app.utils.transcript_chunker import chunk_transcript
+        except ImportError as e:
+            logger.error(f"[{request_id}] Failed to import required utility modules: {str(e)}", exc_info=True)
+            error_result = {
+                "request_id": request_id,
+                "status": "failed",
+                "candidate_id": candidate_id,
+                "job_id": job_id,
+                "created_at": _get_creation_time(request_id),
+                "completed_at": datetime.utcnow().isoformat(),
+                "error": f"Failed to import required modules: {str(e)}"
+            }
+            redis_key = f"call_process:{request_id}"
+            redis_client.setex(redis_key, 3600 * 24, json.dumps(error_result))
+            raise
+        
         logger.info(
             f"Processing call audio - Request: {request_id}, "
             f"Candidate: {candidate_id}, Job: {job_id}"
@@ -89,7 +105,16 @@ def process_call_audio_task(
         
         # Step 1: Audio Preprocessing
         logger.info(f"[{request_id}] Step 1: Preprocessing audio...")
-        audio_bytes = bytes.fromhex(audio_content)
+        
+        # Validate audio content
+        try:
+            audio_bytes = bytes.fromhex(audio_content)
+            if len(audio_bytes) == 0:
+                raise ValueError("Audio content is empty")
+            if len(audio_bytes) > 500 * 1024 * 1024:  # 500MB max
+                raise ValueError(f"Audio file too large: {len(audio_bytes)} bytes")
+        except ValueError as e:
+            raise ValueError(f"Invalid audio content: {str(e)}")
         
         preprocessed_audio = preprocess_audio(
             audio_content=audio_bytes,
@@ -193,7 +218,8 @@ def process_call_audio_task(
             "job_id": job_id,
             "created_at": _get_creation_time(request_id),
             "completed_at": datetime.utcnow().isoformat(),
-            "error": str(e)
+            "error": str(e),
+            "retry_count": self.request.retries
         }
         
         redis_key = f"call_process:{request_id}"
@@ -202,6 +228,11 @@ def process_call_audio_task(
             3600 * 24,  # 1 day TTL for failed requests
             json.dumps(error_result)
         )
+        
+        # Retry logic - only retry on certain exceptions
+        if isinstance(e, (IOError, ConnectionError, TimeoutError)):
+            logger.warning(f"[{request_id}] Retrying task due to {type(e).__name__}")
+            raise self.retry(exc=e, countdown=60)  # Retry after 60 seconds
         
         raise
 
