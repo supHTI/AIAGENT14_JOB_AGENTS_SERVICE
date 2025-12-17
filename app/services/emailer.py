@@ -61,14 +61,11 @@ class EmailService:
 
     def _send_email(self, to_email: str, subject: str, html_content: str, attachments: Iterable[Attachment] = ()) -> bool:
         """Send email using SMTP"""
-        to_email = "shivamkgupta135@gmail.com"
         if not all([self.smtp_server, self.smtp_email, self.smtp_password]):
             logger.warning(f"SMTP configuration is incomplete. Email not sent. to={to_email} from={self.smtp_email}")
             return False
 
-        # msg = self._build_message(to_email, subject, html_content, attachments)
         msg = self._build_message(to_email, subject, html_content, attachments)
-
 
         try:
             logger.info(f"Sending email to {to_email} via {self.smtp_email}@{self.smtp_server}:{self.smtp_port}")
@@ -107,6 +104,9 @@ class EmailService:
         )
         subject = f"Job Assignment: {job_title} - {job_id}"
         return self._send_email(to_email, subject, html_content)
+    
+
+
 
     def send_cooling_period_reminder(
         self,
@@ -266,6 +266,7 @@ class EmailService:
         
         subject = f"Cooling Period Reminder - {len(candidates)} Candidate(s) Assigned to You"
         return self._send_email(to_email, subject, html_content)
+
 
 
 def send_report_email(subject: str, html_body: str, to_email: str, attachments: Iterable[Attachment] = ()):

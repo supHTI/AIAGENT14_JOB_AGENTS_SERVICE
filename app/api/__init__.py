@@ -3,7 +3,7 @@ from .endpoints.job_post_api import router as job_post_router
 from .endpoints.websocket_api import router as websocket_router
 from .endpoints.file_api import router as file_router
 from .endpoints.pdf_api import router as pdf_router
-from .endpoints.call_api import router as call_router
+from .endpoints.cron_job_api import router as cron_job_router
 from .reports import (
     jobs_report_router,
     recruiters_report_router,
@@ -19,7 +19,6 @@ __all__ = [
     "file_router",
     "pdf_router",
     "job_agent_router",
-    "call_router",
     "jobs_report_router",
     "recruiters_report_router",
     "pipeline_report_router",

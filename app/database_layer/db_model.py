@@ -63,22 +63,6 @@ class User(Base):
     logger.info("User model configured successfully")
 
 
-
-
-# ---------------------------------------------------------
-# NOTIFICATION USERS
-# ---------------------------------------------------------
-
-class NotificationUser(Base):
-    __tablename__ = "notification_users"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    created_by = Column(Integer, nullable=False)
-
-    user = relationship("User", backref="notification_users")
-
 class UserJobsAssigned(Base):
     """Mapping users assigned to specific job openings"""
     __tablename__ = 'user_jobs_assigned'
@@ -94,6 +78,18 @@ class UserJobsAssigned(Base):
     job = relationship("JobOpenings", foreign_keys=[job_id])
     user = relationship("User", foreign_keys=[user_id])
     logger.info("UserJobsAssigned model configured successfully")
+
+class NotificationUser(Base):
+    __tablename__ = "notification_users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_by = Column(Integer, nullable=False)
+
+    user = relationship("User", backref="notification_users")
+
+
 
 class Session(Base):
     """Session model for tracking user login sessions"""
@@ -278,9 +274,8 @@ class Company(Base):
     created_by_user = relationship("User", foreign_keys=[created_by])
     updated_by_user = relationship("User", foreign_keys=[updated_by])
     deleted_by_user = relationship("User", foreign_keys=[deleted_by])
-    spocs = relationship("CompanySpoc", back_populates="company")
     
-
+    
     
 class TaskLogs(Base):
     __tablename__ = "task_logs"
@@ -292,6 +287,7 @@ class TaskLogs(Base):
     status = Column(String(50), nullable=True)
     error = Column(String(250), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    spocs = relationship("CompanySpoc", back_populates="company")
 
 
 class CompanySpoc(Base):
@@ -377,7 +373,7 @@ class CandidateStatus(Base):
     candidate_status = Column(Text, nullable=False)
     remarks = Column(Text, nullable=True)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
-    
+
     candidate = relationship("Candidates", foreign_keys=[candidate_id])
     logger.info("CandidateStatus model configured successfully")
 
@@ -400,7 +396,7 @@ class CandidateActivity(Base):
     type = Column(SAEnum(CandidateActivityType), nullable=False)
     key_id = Column(String(100), nullable=False, default="100")
     created_at = Column(TIMESTAMP, server_default=func.now(), index=True)
-    
+
     candidate = relationship("Candidates", foreign_keys=[candidate_id])
     user = relationship("User", foreign_keys=[user_id])
     logger.info("CandidateActivity model configured successfully")
@@ -444,7 +440,7 @@ class CandidateJobStatus(Base):
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     joined_at = Column(DateTime, nullable=True, index=True)
     rejected_at = Column(DateTime, nullable=True, index=True)
-    cooling_period_closed = Column(DateTime, nullable=True)
+
     candidate_job = relationship("CandidateJobs", foreign_keys=[candidate_job_id])
     creator = relationship("User", foreign_keys=[created_by])
     updater = relationship("User", foreign_keys=[updated_by])

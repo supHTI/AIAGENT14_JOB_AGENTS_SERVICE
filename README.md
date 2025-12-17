@@ -84,8 +84,6 @@ Or with more verbose logging:
 ```bash
 uv run celery -A celery_worker worker --loglevel=debug --pool=threads --concurrency=4
 ```
-uv run celery -A app.celery_app.celery_config worker -Q job_queue -l info --pool=threads --concurrency=10
-
 
 **Note:** Make sure Redis is running before starting Celery workers.
 
@@ -102,6 +100,18 @@ To monitor Celery tasks in real-time:
 ```bash
 uv run celery -A celery_worker flower
 ```
+
+
+### for window
+```bash
+uv run celery -A app.celery_app.celery_config worker -Q job_queue -l info --pool=threads --concurrency=10
+```
+### for window 
+
+```bash
+uv run celery -A app.celery.celery_config beat -l info
+```
+
 
 Then access Flower at `http://localhost:5555`
 

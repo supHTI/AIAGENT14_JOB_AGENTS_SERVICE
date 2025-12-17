@@ -84,10 +84,10 @@ class Settings(BaseSettings):
 
     @property
     def DB_URI(self) -> str:
-                encoded_password = quote_plus(self.DB_PASSWORD)
-                uri = f"mysql+pymysql://{self.DB_USER}:{encoded_password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
-                logger.debug(f"Database URI (password masked): {uri.replace(encoded_password, '****')}")
-                return uri
+        encoded_password = quote_plus(self.DB_PASSWORD)
+        uri = f"mysql+mysqlconnector://{self.DB_USER}:{encoded_password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?ssl_disabled=true"
+        logger.debug(f"Database URI (password masked): {uri.replace(encoded_password, '****')}")
+        return uri
 
     class Config:
         """

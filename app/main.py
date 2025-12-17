@@ -12,17 +12,18 @@ from app.api import (
     websocket_router,
     file_router,
     pdf_router,
-    call_router,
     jobs_report_router,
     recruiters_report_router,
     pipeline_report_router,
     clawback_report_router,
     exports_report_router,
+    cron_job_router,
 )
 
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.endpoints.job_agent_api import router as job_agent_router
 import logging
+from app.api.endpoints.cron_job_api import router as cron_job_router
 
 # Configure logging
 logging.basicConfig(
@@ -54,14 +55,13 @@ app.include_router(job_post_router)
 app.include_router(websocket_router)
 app.include_router(file_router)
 app.include_router(pdf_router)
-app.include_router(call_router)
 
 app.include_router(jobs_report_router)
 app.include_router(recruiters_report_router)
 app.include_router(pipeline_report_router)
 app.include_router(clawback_report_router)
 app.include_router(exports_report_router)
-
+app.include_router(cron_job_router)
 
 
 

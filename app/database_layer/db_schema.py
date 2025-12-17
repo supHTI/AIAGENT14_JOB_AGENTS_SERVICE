@@ -1,9 +1,6 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel,Field
 from typing import Dict, Any, Optional
 from datetime import datetime
-
-
-
 class JobAgentResponse(BaseModel):
     success: bool = True
     data: Dict[str, Any]
@@ -16,6 +13,7 @@ class TaskLogsCreate(BaseModel):
     key_id: Optional[int] = None
     status: Optional[str] = None
     error: Optional[str] = None
+
 
 # ---------------------------------------------------------
 # BASE SCHEMA

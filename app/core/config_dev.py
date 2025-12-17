@@ -20,7 +20,6 @@ import os
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from dotenv import load_dotenv
-from typing import Optional
 #from .logging import setup_logging
 import logging
 from urllib.parse import quote_plus
@@ -31,14 +30,6 @@ load_dotenv(override=True)
 # Setup application logging
 #setup_logging(override=True)
 logger = logging.getLogger("app_logger")
-
- # Redis  ✅ FIXED
-    # -------------------------
-REDIS_HOST: str
-REDIS_PORT: int
-REDIS_DB: int = 0
-REDIS_PASSWORD: Optional[str] = None  # ✅ IMPORTANT
-
 
 class Settings(BaseSettings):
     """
@@ -119,10 +110,10 @@ class Settings(BaseSettings):
 
         @property
         def DB_URI(self) -> str:
-                    encoded_password = quote_plus(self.DB_PASSWORD)
-                    uri = f"mysql+pymysql://{self.DB_USER}:{encoded_password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
-                    logger.debug(f"Database URI (password masked): {uri.replace(encoded_password, '****')}")
-                    return uri
+            encoded_password = quote_plus(self.DB_PASSWORD)
+            uri = f"mysql+mysqlconnector://{self.DB_USER}:{encoded_password}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}?ssl_disabled=true"
+            logger.debug(f"Database URI (password masked): {uri.replace(encoded_password, '****')}")
+            return uri
 
         class Config:
             """
