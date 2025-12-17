@@ -294,6 +294,7 @@ from app.database_layer.db_model import (
 from app.database_layer.db_schema import (
     NotificationUserCreate,
     NotificationUserResponse,
+    NotificationUserCreateRequest
 )
 from app.services.emailer import EmailService
 from app.celery.tasks.cooling_period_task import send_daily_cooling_period_reminders
@@ -396,28 +397,67 @@ def trigger_daily_cooling_period_reminders():
         raise HTTPException(status_code=500, detail="Failed to trigger task")
 
 
-# ==================================================================
-# 3️⃣ ADD NOTIFICATION USERS (ADMIN / SUPER ADMIN)
-# ==================================================================
+# # ==================================================================
+# # 3️⃣ ADD NOTIFICATION USERS (ADMIN / SUPER ADMIN)
+# # ==================================================================
+# @router.post(
+#     "/notifications/users",
+#     response_model=List[NotificationUserResponse],
+#     status_code=status.HTTP_201_CREATED,
+# )
+# def add_notification_users(
+#     payload: dict,
+#     db: Session = Depends(get_db),
+#     current_user: dict = Depends(get_current_admin_user),
+# ):
+#     """
+#     Add users who should receive manager-level clawback notifications.
+#     """
+#     if current_user["role"] not in ("admin", "super_admin"):
+#         raise HTTPException(status_code=403, detail="Access denied")
+
+#     user_ids = payload.get("user_id")
+#     if not user_ids or not isinstance(user_ids, list):
+#         raise HTTPException(status_code=400, detail="user_id must be a list")
+
+#     created_records = []
+
+#     for uid in user_ids:
+#         exists = (
+#             db.query(NotificationUser)
+#             .filter(NotificationUser.user_id == uid)
+#             .first()
+#         )
+#         if exists:
+#             continue  # Prevent duplicates
+
+#         notification_user = NotificationUser(
+#             user_id=uid,
+#             created_by=current_user["id"],
+#         )
+#         db.add(notification_user)
+#         db.flush()
+#         created_records.append(notification_user)
+
+#     db.commit()
+#     logger.info(f"Notification users added: {user_ids}")
+
+#     return created_records
+
 @router.post(
     "/notifications/users",
     response_model=List[NotificationUserResponse],
     status_code=status.HTTP_201_CREATED,
 )
 def add_notification_users(
-    payload: dict,
+    payload: NotificationUserCreateRequest,   # 👈 FIXED
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user),
 ):
-    """
-    Add users who should receive manager-level clawback notifications.
-    """
     if current_user["role"] not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    user_ids = payload.get("user_id")
-    if not user_ids or not isinstance(user_ids, list):
-        raise HTTPException(status_code=400, detail="user_id must be a list")
+    user_ids = payload.user_id  # 👈 FIXED
 
     created_records = []
 
@@ -428,7 +468,7 @@ def add_notification_users(
             .first()
         )
         if exists:
-            continue  # Prevent duplicates
+            continue
 
         notification_user = NotificationUser(
             user_id=uid,
@@ -439,6 +479,7 @@ def add_notification_users(
         created_records.append(notification_user)
 
     db.commit()
+
     logger.info(f"Notification users added: {user_ids}")
 
     return created_records
