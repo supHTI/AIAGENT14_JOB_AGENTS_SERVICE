@@ -134,15 +134,19 @@ def add_notification_users(
     current_user: dict = Depends(get_current_admin_user),
 ):
     """
-    Add users who should receive manager-level clawback notifications.
+    Add admin/superadmin users who should receive manager-level clawback notifications.
+    
+    Only users with 'admin' or 'super_admin' role can be added.
+    Only users with 'admin' or 'super_admin' role can trigger this API.
     
     Request body:
     {
-        "user_id": [1, 2, 3]  # List of user IDs to add
+        "user_id": [1, 2, 3]  # List of admin/superadmin user IDs to add
     }
     """
-    if current_user["role"] not in ("admin", "super_admin"):
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Validate current user is admin or super_admin
+    if current_user["role"] not in ("Admin", "SuperAdmin"):
+        raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
 
     user_ids = payload.get("user_id")
     if not user_ids or not isinstance(user_ids, list):
@@ -160,6 +164,14 @@ def add_notification_users(
             user = db.query(User).filter(User.id == uid).first()
             if not user:
                 failed_users.append({"user_id": uid, "error": "User not found"})
+                continue
+            
+            # Validate user is admin or super_admin by checking role relationship
+            user_role = db.query(User).filter(User.id == uid).first().role
+            logger.error(f"user role {user_role.name} with user id{uid}", exc_info=True)
+
+            if not user_role or user_role.name not in ("Admin", "SuperAdmin"):
+                failed_users.append({"user_id": uid, "error": "User must be admin or super_admin"})
                 continue
             
             # Check if notification user already exists
@@ -219,10 +231,12 @@ def delete_notification_user(
     current_user: dict = Depends(get_current_admin_user),
 ):
     """
-    Remove a user from clawback notification recipients.
+    Remove an admin/superadmin user from clawback notification recipients.
+    Only admin or super_admin users can trigger this API.
     """
-    if current_user["role"] not in ("admin", "super_admin"):
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Validate current user is admin or super_admin
+    if current_user["role"] not in  ("Admin", "SuperAdmin"):
+        raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
 
     notification_user = (
         db.query(NotificationUser)
