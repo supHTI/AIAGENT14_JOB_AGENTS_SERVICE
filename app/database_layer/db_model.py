@@ -373,6 +373,7 @@ class CandidateActivityType(enum.Enum):
     pipeline = "pipeline"
     accepted = "accepted"
     status = "status"
+    rejected = "rejected"
 
 
 class CandidateActivity(Base):
