@@ -274,6 +274,7 @@ class Company(Base):
     created_by_user = relationship("User", foreign_keys=[created_by])
     updated_by_user = relationship("User", foreign_keys=[updated_by])
     deleted_by_user = relationship("User", foreign_keys=[deleted_by])
+    spocs = relationship("CompanySpoc", back_populates="company")
     
     
     
@@ -287,7 +288,7 @@ class TaskLogs(Base):
     status = Column(String(50), nullable=True)
     error = Column(String(250), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    spocs = relationship("CompanySpoc", back_populates="company")
+    # spocs = relationship("CompanySpoc", back_populates="company")
 
 
 class CompanySpoc(Base):
@@ -440,6 +441,7 @@ class CandidateJobStatus(Base):
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     joined_at = Column(DateTime, nullable=True, index=True)
     rejected_at = Column(DateTime, nullable=True, index=True)
+    cooling_period_closed = Column(DateTime, nullable=True)
 
     candidate_job = relationship("CandidateJobs", foreign_keys=[candidate_job_id])
     creator = relationship("User", foreign_keys=[created_by])

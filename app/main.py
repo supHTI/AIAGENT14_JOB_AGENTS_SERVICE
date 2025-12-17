@@ -18,6 +18,7 @@ from app.api import (
     clawback_report_router,
     exports_report_router,
     cron_job_router,
+    call_api_router
 )
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -55,6 +56,7 @@ app.include_router(job_post_router)
 app.include_router(websocket_router)
 app.include_router(file_router)
 app.include_router(pdf_router)
+app.include_router(call_api_router)
 
 app.include_router(jobs_report_router)
 app.include_router(recruiters_report_router)
@@ -62,6 +64,7 @@ app.include_router(pipeline_report_router)
 app.include_router(clawback_report_router)
 app.include_router(exports_report_router)
 app.include_router(cron_job_router)
+
 
 
 

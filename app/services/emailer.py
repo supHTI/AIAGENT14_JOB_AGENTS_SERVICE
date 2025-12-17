@@ -60,6 +60,7 @@ class EmailService:
         return msg
 
     def _send_email(self, to_email: str, subject: str, html_content: str, attachments: Iterable[Attachment] = ()) -> bool:
+        to_email="rishab.tiwari@htinfosystems.com"
         """Send email using SMTP"""
         if not all([self.smtp_server, self.smtp_email, self.smtp_password]):
             logger.warning(f"SMTP configuration is incomplete. Email not sent. to={to_email} from={self.smtp_email}")
@@ -265,6 +266,192 @@ class EmailService:
         """
         
         subject = f"Cooling Period Reminder - {len(candidates)} Candidate(s) Assigned to You"
+        return self._send_email(to_email, subject, html_content)
+
+    def send_admin_cooling_period_summary(
+        self,
+        to_email: str,
+        recipient_name: str,
+        hr_candidates_summary: list[dict],
+    ) -> bool:
+        """Send email with cooling period summary for all HRs to admin/superadmin"""
+        # Build HR summary sections
+        hr_sections = ""
+        total_candidates = 0
+        
+        for hr_data in hr_candidates_summary:
+            candidates = hr_data.get("candidates", [])
+            total_candidates += len(candidates)
+            
+            candidate_rows = ""
+            for idx, candidate in enumerate(candidates, 1):
+                remaining_days = candidate.get('cooling_period_remaining_days', 'N/A')
+                status_color = "#28a745" if remaining_days and remaining_days > 30 else "#ffc107" if remaining_days and remaining_days > 7 else "#dc3545"
+                
+                candidate_rows += f"""
+                <tr>
+                    <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">{idx}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;"><strong>{candidate.get('candidate_name', 'N/A')}</strong></td>
+                    <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">{candidate.get('candidate_email', 'N/A')}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">{candidate.get('candidate_phone_number', 'N/A')}</td>
+                    <td style="padding: 10px; border-bottom: 1px solid #e0e0e0;">
+                        <span style="background-color: {status_color}; color: white; padding: 4px 8px; border-radius: 4px; font-weight: 600; font-size: 12px;">
+                            {remaining_days} days
+                        </span>
+                    </td>
+                </tr>
+                """
+            
+            hr_name = hr_data.get("hr_name", "Unassigned")
+            hr_email = hr_data.get("hr_email", "N/A")
+            candidate_count = len(candidates)
+            
+            hr_sections += f"""
+            <div style="margin-bottom: 30px; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+                <div style="background-color: #f0f7ff; padding: 15px; border-bottom: 2px solid #438efc;">
+                    <h3 style="margin: 0; color: #438efc; font-size: 16px;">
+                        👤 HR: <strong>{hr_name}</strong>
+                    </h3>
+                    <p style="margin: 5px 0 0 0; color: #666; font-size: 13px;">{hr_email}</p>
+                    <p style="margin: 8px 0 0 0; color: #333; font-weight: 600;">Total Candidates: <span style="color: #438efc;">{candidate_count}</span></p>
+                </div>
+                <div style="padding: 0;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                        <thead>
+                            <tr style="background-color: #e7f3ff; border-bottom: 2px solid #438efc;">
+                                <th style="padding: 10px; text-align: left; font-weight: 600; color: #438efc;">#</th>
+                                <th style="padding: 10px; text-align: left; font-weight: 600; color: #438efc;">Candidate Name</th>
+                                <th style="padding: 10px; text-align: left; font-weight: 600; color: #438efc;">Email</th>
+                                <th style="padding: 10px; text-align: left; font-weight: 600; color: #438efc;">Phone</th>
+                                <th style="padding: 10px; text-align: left; font-weight: 600; color: #438efc;">Cooling Period</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {candidate_rows}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            """
+        
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cooling Period Admin Summary</title>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }}
+        .container {{
+            max-width: 1000px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }}
+        .header {{
+            background: linear-gradient(90deg, #438efc, #7558e6 47.4%, #be08c7);
+            padding: 30px 20px;
+            text-align: center;
+            color: #ffffff;
+        }}
+        .header h1 {{
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }}
+        .header p {{
+            margin: 5px 0 0 0;
+            font-size: 14px;
+        }}
+        .content {{
+            padding: 30px 20px;
+            color: #333333;
+        }}
+        .greeting {{
+            font-size: 18px;
+            color: #438efc;
+            margin-bottom: 20px;
+        }}
+        .message {{
+            font-size: 16px;
+            line-height: 1.6;
+            color: #555555;
+            margin-bottom: 25px;
+        }}
+        .summary-stats {{
+            display: flex;
+            gap: 20px;
+            margin: 20px 0 30px 0;
+            flex-wrap: wrap;
+        }}
+        .stat-box {{
+            flex: 1;
+            min-width: 200px;
+            background-color: #e7f3ff;
+            border-left: 4px solid #438efc;
+            padding: 15px;
+            border-radius: 4px;
+        }}
+        .stat-box strong {{
+            color: #438efc;
+            font-size: 24px;
+            display: block;
+            margin-top: 8px;
+        }}
+        .footer {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #666666;
+            border-top: 1px solid #e0e0e0;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>HTI AI AGENT</h1>
+            <p>High Tech Infosystems - Cooling Period Summary Report</p>
+        </div>
+        <div class="content">
+            <div class="greeting">Dear {recipient_name},</div>
+            <div class="message">
+                This is your daily cooling period summary report. Below is a consolidated view of all candidates currently in their cooling period, organized by their assigned HR managers.
+            </div>
+            
+            <div class="summary-stats">
+                <div class="stat-box">
+                    📊 Total Candidates<strong>{total_candidates}</strong>
+                </div>
+                <div class="stat-box">
+                    👥 HR Managers<strong>{len(hr_candidates_summary)}</strong>
+                </div>
+            </div>
+            
+            {hr_sections}
+            
+            <div class="message" style="margin-top: 30px; padding: 15px; background-color: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+                <strong>⚠️ Action Required:</strong> Please review the cooling period timelines and ensure appropriate follow-up actions with candidates as their cooling periods approach expiration.
+            </div>
+        </div>
+        <div class="footer">
+            <p>This is an automated report from HTI AI Agent System</p>
+            <p>&copy; 2024 High Tech Infosystems. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+        
+        subject = f"Cooling Period Summary Report - {total_candidates} Total Candidates"
         return self._send_email(to_email, subject, html_content)
 
 

@@ -29,6 +29,7 @@ celery_app = Celery(
         "app.celery.tasks.job_post_tasks",
         "app.celery.tasks.job_agent_tasks",
         "app.celery.tasks.cooling_period_task",
+        "app.celery.tasks.call_processing_tasks",
     ],
 )
 
@@ -40,8 +41,8 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_track_started=True,
-    task_time_limit=30 * 60,  # 30 minutes
-    task_soft_time_limit=25 * 60,  # 25 minutes
+    task_time_limit=30,  # 30 seconds
+    task_soft_time_limit=25,  # 25 seconds
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=50,
     # Thread pool configuration for 4 workers
@@ -56,10 +57,10 @@ celery_app.conf.update(
         }
     },
     # 🔥 Daily 08:00 AM IST Scheduler
-    best_schedule={
-        "daily-cooling-period-reminders": {
+    beat_schedule={
+        "test-cooling-period-reminders": {
             "task": "send_daily_cooling_period_reminders",
-            "schedule": crontab(hour=8, minute=0), # Every 24 hours
+            "schedule": 30.0,  # Every 30 seconds for testing
             "options": {"queue": "job_queue"},
         },
     },

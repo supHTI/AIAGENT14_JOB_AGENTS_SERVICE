@@ -11,6 +11,7 @@ from .reports import (
     clawback_report_router,
     exports_report_router,
 )
+from .endpoints.call_api import router as call_api_router
 from .dependencies import report_progress, get_progress, delete_progress
 __all__ = [
     "test_api_router",
@@ -27,5 +28,6 @@ __all__ = [
     "report_progress",
     "get_progress",
     "delete_progress",
+    ""
 ]
 

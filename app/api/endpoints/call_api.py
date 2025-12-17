@@ -85,6 +85,20 @@ async def process_call(
     from app.celery.tasks.call_processing_tasks import process_call_audio_task
     
     try:
+        # Validate audio file exists
+        if not audio_file:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No audio file provided"
+            )
+        
+        # Validate filename
+        if not audio_file.filename or not isinstance(audio_file.filename, str):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid filename"
+            )
+        
         # Validate file format
         if not validate_audio_file(audio_file.filename):
             raise HTTPException(
@@ -92,24 +106,46 @@ async def process_call(
                 detail=f"Unsupported file format. Supported formats: {', '.join(SUPPORTED_FORMATS)}"
             )
         
-        # Validate candidate_id and job_id
-        if candidate_id <= 0:
+        # Validate candidate_id
+        if not isinstance(candidate_id, int) or candidate_id <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="candidate_id must be a positive integer"
             )
         
-        if job_id <= 0:
+        # Validate job_id
+        if not isinstance(job_id, int) or job_id <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="job_id must be a positive integer"
             )
         
+        # Validate language code
+        if language and (not isinstance(language, str) or len(language) < 2):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid language code"
+            )
+        
         # Generate unique request ID
         request_id = str(uuid.uuid4())[:8]
         
-        # Read audio file content
+        # Read and validate audio file size
         audio_content = await audio_file.read()
+        
+        # Validate file size (max 100MB)
+        max_size = 100 * 1024 * 1024
+        if len(audio_content) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Audio file is empty"
+            )
+        
+        if len(audio_content) > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Audio file too large. Maximum size: {max_size / (1024*1024):.0f}MB"
+            )
         
         # Store initial request metadata in Redis
         request_data = {
@@ -117,9 +153,10 @@ async def process_call(
             "status": "processing",
             "candidate_id": candidate_id,
             "job_id": job_id,
-            "language": language,
-            "diarization": diarization,
+            "language": language or "en-IN",
+            "diarization": diarization if diarization is not None else True,
             "filename": audio_file.filename,
+            "file_size": len(audio_content),
             "created_at": datetime.utcnow().isoformat()
         }
         
@@ -137,13 +174,14 @@ async def process_call(
             filename=audio_file.filename,
             candidate_id=candidate_id,
             job_id=job_id,
-            language=language,
-            diarization=diarization
+            language=language or "en-IN",
+            diarization=diarization if diarization is not None else True
         )
         
         logger.info(
             f"Call processing queued - Request ID: {request_id}, "
-            f"Candidate: {candidate_id}, Job: {job_id}, Task: {task.id}"
+            f"Candidate: {candidate_id}, Job: {job_id}, Task: {task.id}, "
+            f"File size: {len(audio_content) / (1024*1024):.2f}MB"
         )
         
         return CallProcessRequest(
@@ -185,6 +223,13 @@ async def get_call_result(request_id: str):
     - **failed**: Processing encountered an error
     """
     try:
+        # Validate request_id format
+        if not request_id or len(request_id) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid request_id"
+            )
+        
         redis_key = f"call_process:{request_id}"
         
         # Fetch from Redis
@@ -229,6 +274,13 @@ async def delete_call_result(request_id: str):
     - Success message
     """
     try:
+        # Validate request_id format
+        if not request_id or len(request_id) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid request_id"
+            )
+        
         redis_key = f"call_process:{request_id}"
         
         # Check if exists
@@ -246,7 +298,8 @@ async def delete_call_result(request_id: str):
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
-                "message": f"Successfully deleted result for request_id: {request_id}"
+                "message": f"Successfully deleted result for request_id: {request_id}",
+                "request_id": request_id
             }
         )
         

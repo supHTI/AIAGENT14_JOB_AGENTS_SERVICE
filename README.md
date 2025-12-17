@@ -104,7 +104,7 @@ uv run celery -A celery_worker flower
 
 ### for window
 ```bash
-uv run celery -A app.celery_app.celery_config worker -Q job_queue -l info --pool=threads --concurrency=10
+uv run celery -A app.celery.celery_config worker -Q job_queue -l info --pool=threads --concurrency=10
 ```
 ### for window 
 

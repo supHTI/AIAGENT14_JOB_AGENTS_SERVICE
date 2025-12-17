@@ -1,280 +1,4 @@
 
-# from fastapi import APIRouter, Depends
-# from sqlalchemy.orm import Session
-# from datetime import datetime
-# from collections import defaultdict
-# import logging
-# from app.database_layer.db_config import get_db
-# from app.database_layer.db_model import Candidates, CandidateJobs, CandidateJobStatus, User
-# from app.services.emailer import EmailService
-# from app.celery.tasks.cooling_period_tasks import send_daily_cooling_period_reminders
-
-# logger = logging.getLogger("app_logger")
- 
-# router = APIRouter()
- 
-# @router.get("/candidate_metrics")
-# def candidate_metrics(db: Session = Depends(get_db)):
-#     today = datetime.utcnow()
-   
-#     # Total candidates
-#     total_candidates = db.query(Candidates).count()
-#     print("Total candidates:", total_candidates)
-   
-#     # Candidates with joined status - joined with candidate details
-#     joined_candidates_data = (
-#         db.query(
-#             Candidates.candidate_id,
-#             Candidates.candidate_name,
-#             Candidates.candidate_email,
-#             Candidates.candidate_phone_number,
-#             CandidateJobStatus.cooling_period_closed,
-#             Candidates.assigned_to,
-#         )
-#         .join(CandidateJobs, CandidateJobs.candidate_id == Candidates.candidate_id)
-#         .join(CandidateJobStatus, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
-#         .filter(CandidateJobStatus.type == "JOINED")
-#         .all()
-#     )
-#     print("Joined candidates data:", joined_candidates_data)
-   
-#     # Group candidates by assigned_to user
-#     user_candidates = defaultdict(list)
-    
-#     result_candidate = []
-#     for row in joined_candidates_data:
-#         remaining_days = None
-#         if row.cooling_period_closed:
-#             remaining_days = (row.cooling_period_closed - today).days
-#             if remaining_days < 0:
-#                 remaining_days = 0
-        
-#         candidate_info = {
-#             "candidate_id": row.candidate_id,
-#             "candidate_name": row.candidate_name,
-#             "candidate_email": row.candidate_email,
-#             "candidate_phone_number": row.candidate_phone_number,
-#             "assigned_to": row.assigned_to,
-#             "cooling_period_remaining_days": remaining_days,
-#         }
-        
-#         result_candidate.append(candidate_info)
-        
-#         # Group by assigned_to user
-#         if row.assigned_to:
-#             user_candidates[row.assigned_to].append(candidate_info)
-    
-#     # Fetch user details and prepare grouped data
-#     grouped_by_user = {}
-#     for user_id, candidates in user_candidates.items():
-#         user = db.query(User).filter(User.id == user_id).first()
-#         if user:
-#             grouped_by_user[user.email] = {
-#                 "user_id": user_id,
-#                 "user_name": user.username,
-#                 "user_email": user.email,
-#                 "candidates": candidates
-#             }
- 
-#     return {
-#         "total_candidates": total_candidates,
-#         "joined_candidates": result_candidate,
-#         "grouped_by_user": grouped_by_user
-#     }
-
-# from app.database_layer.db_model import NotificationUser
-
-# @router.post("/send_cooling_period_reminders")
-# def send_cooling_period_reminders(db: Session = Depends(get_db)):
-#     """
-#     Send cooling period reminder emails to assigned users.
-#     Each user gets one email with all their assigned candidates.
-#     """
-#     try:
-#         today = datetime.utcnow()
-        
-#         # Fetch candidates with joined status
-#         joined_candidates_data = (
-#             db.query(
-#                 Candidates.candidate_id,
-#                 Candidates.candidate_name,
-#                 Candidates.candidate_email,
-#                 Candidates.candidate_phone_number,
-#                 CandidateJobStatus.cooling_period_closed,
-#                 Candidates.assigned_to,
-#             )
-#             .join(CandidateJobs, CandidateJobs.candidate_id == Candidates.candidate_id)
-#             .join(CandidateJobStatus, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
-#             .filter(CandidateJobStatus.type == "JOINED")
-#             .distinct()  # Ensure unique candidates
-#             .all()
-#         )
-        
-#         # Group candidates by assigned_to user
-#         user_candidates = defaultdict(list)
-#         seen_candidates = set()  # Track unique candidates per user
-        
-#         for row in joined_candidates_data:
-#             remaining_days = None
-#             if row.cooling_period_closed:
-#                 remaining_days = (row.cooling_period_closed - today).days
-#                 if remaining_days < 0:
-#                     remaining_days = 0
-            
-#             candidate_key = (row.assigned_to, row.candidate_id)
-            
-#             # Only add if not already seen for this user
-#             if candidate_key not in seen_candidates:
-#                 seen_candidates.add(candidate_key)
-                
-#                 candidate_info = {
-#                     "candidate_id": row.candidate_id,
-#                     "candidate_name": row.candidate_name,
-#                     "candidate_email": row.candidate_email,
-#                     "candidate_phone_number": row.candidate_phone_number,
-#                     "cooling_period_remaining_days": remaining_days,
-#                 }
-                
-#                 if row.assigned_to:
-#                     user_candidates[row.assigned_to].append(candidate_info)
-        
-#         # Send emails to each assigned user
-#         email_service = EmailService()
-#         email_results = []
-        
-#         for user_id, candidates in user_candidates.items():
-#             # Fetch user details
-#             user = db.query(User).filter(User.id == user_id).first()
-            
-#             if not user or not user.email:
-#                 logger.warning(f"User {user_id} not found or has no email. Skipping.")
-#                 email_results.append({
-#                     "user_id": user_id,
-#                     "status": "failed",
-#                     "reason": "User not found or no email"
-#                 })
-#                 continue
-            
-#             # Send email with all candidates for this user
-#             try:
-#                 success = email_service.send_cooling_period_reminder(
-#                     to_email=user.email,
-#                     recipient_name=user.username or "User",
-#                     candidates=candidates
-#                 )
-#                 if success:
-#                     logger.info(f"Cooling period reminder email sent to {user.email}")
-#                     notification = NotificationUser(
-#                     user_id=user_id,
-#                     created_by=user_id
-#                 )
-
-#                 db.add(notification)
-#                 db.commit()
-
-                
-#                 email_results.append({
-#                     "user_id": user_id,
-#                     "user_email": user.email,
-#                     "candidate_count": len(candidates),
-#                     "status": "sent" if success else "failed",
-#                     "candidates": [c["candidate_name"] for c in candidates]
-#                 })
-                
-#                 logger.info(f"Email {'sent' if success else 'failed'} to {user.email} with {len(candidates)} candidate(s)")
-                
-#             except Exception as e:
-#                 logger.error(f"Error sending email to {user.email}: {str(e)}")
-#                 email_results.append({
-#                     "user_id": user_id,
-#                     "user_email": user.email,
-#                     "status": "failed",
-#                     "reason": str(e)
-#                 })
-        
-#         return {
-#             "message": "Cooling period reminder emails processing completed",
-#             "total_users_notified": len(email_results),
-#             "email_results": email_results,
-#             "details": user_candidates
-#         }
-        
-#     except Exception as e:
-#         logger.error(f"Error in send_cooling_period_reminders: {str(e)}")
-#         return {
-#             "message": "Error sending reminders",
-#             "error": str(e)
-#         }
-
-
-# @router.post("/trigger_daily_cooling_period_reminders")
-# def trigger_daily_cooling_period_reminders():
-#     """
-#     Manually trigger the daily cooling period reminder email task via Celery.
-#     This endpoint queues the task to run in the background.
-    
-#     Returns:
-#         dict: Task ID and status information
-#     """
-#     try:
-#         # Trigger the Celery task
-#         task = send_daily_cooling_period_reminders.apply_async()
-        
-#         return {
-#             "message": "Daily cooling period reminder task has been queued",
-#             "task_id": task.id,
-#             "status": "queued",
-#             "note": "The task will be processed by Celery workers. Use the task_id to check status."
-#         }
-        
-#     except Exception as e:
-#         logger.error(f"Error triggering daily cooling period reminders: {str(e)}")
-#         return {
-#             "message": "Error triggering task",
-#             "error": str(e)
-#         }
-
-
-# @router.get("/check_cooling_period_task/{task_id}")
-# def check_cooling_period_task(task_id: str):
-#     """
-#     Check the status of a cooling period reminder task.
-    
-#     Args:
-#         task_id: The Celery task ID
-    
-#     Returns:
-#         dict: Task status and result information
-#     """
-#     try:
-#         from celery.result import AsyncResult
-#         from app.celery.celery_config import celery_app
-        
-#         task_result = AsyncResult(task_id, app=celery_app)
-        
-#         response = {
-#             "task_id": task_id,
-#             "status": task_result.state,
-#             "ready": task_result.ready(),
-#             "successful": task_result.successful() if task_result.ready() else None,
-#         }
-        
-#         # Add result if task is completed
-#         if task_result.ready():
-#             if task_result.successful():
-#                 response["result"] = task_result.result
-#             else:
-#                 response["error"] = str(task_result.info)
-        
-#         return response
-        
-#     except Exception as e:
-#         logger.error(f"Error checking task status: {str(e)}")
-#         return {
-#             "task_id": task_id,
-#             "error": str(e)
-#         }
-
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -410,36 +134,86 @@ def add_notification_users(
     current_user: dict = Depends(get_current_admin_user),
 ):
     """
-    Add users who should receive manager-level clawback notifications.
+    Add admin/superadmin users who should receive manager-level clawback notifications.
+    
+    Only users with 'admin' or 'super_admin' role can be added.
+    Only users with 'admin' or 'super_admin' role can trigger this API.
+    
+    Request body:
+    {
+        "user_id": [1, 2, 3]  # List of admin/superadmin user IDs to add
+    }
     """
-    if current_user["role"] not in ("admin", "super_admin"):
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Validate current user is admin or super_admin
+    if current_user["role"] not in ("Admin", "SuperAdmin"):
+        raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
 
     user_ids = payload.get("user_id")
     if not user_ids or not isinstance(user_ids, list):
         raise HTTPException(status_code=400, detail="user_id must be a list")
 
+    if not user_ids:  # Check for empty list
+        raise HTTPException(status_code=400, detail="user_id list cannot be empty")
+
     created_records = []
+    failed_users = []
 
     for uid in user_ids:
-        exists = (
-            db.query(NotificationUser)
-            .filter(NotificationUser.user_id == uid)
-            .first()
-        )
-        if exists:
-            continue  # Prevent duplicates
+        try:
+            # Validate user exists
+            user = db.query(User).filter(User.id == uid).first()
+            if not user:
+                failed_users.append({"user_id": uid, "error": "User not found"})
+                continue
+            
+            # Validate user is admin or super_admin by checking role relationship
+            user_role = db.query(User).filter(User.id == uid).first().role
+            logger.error(f"user role {user_role.name} with user id{uid}", exc_info=True)
 
-        notification_user = NotificationUser(
-            user_id=uid,
-            created_by=current_user["id"],
-        )
-        db.add(notification_user)
-        db.flush()
-        created_records.append(notification_user)
+            if not user_role or user_role.name not in ("Admin", "SuperAdmin"):
+                failed_users.append({"user_id": uid, "error": "User must be admin or super_admin"})
+                continue
+            
+            # Check if notification user already exists
+            exists = (
+                db.query(NotificationUser)
+                .filter(NotificationUser.user_id == uid)
+                .first()
+            )
+            if exists:
+                failed_users.append({"user_id": uid, "error": "Already in notification list"})
+                continue  # Skip duplicates
 
-    db.commit()
-    logger.info(f"Notification users added: {user_ids}")
+            # Create notification user
+            notification_user = NotificationUser(
+                user_id=uid,
+                created_by=current_user["id"],
+            )
+            db.add(notification_user)
+            db.flush()
+            created_records.append(notification_user)
+            
+        except Exception as e:
+            logger.error(f"Error adding notification user {uid}: {str(e)}", exc_info=True)
+            failed_users.append({"user_id": uid, "error": str(e)})
+            db.rollback()
+            continue
+
+    try:
+        db.commit()
+        logger.info(f"Notification users added: {[u.user_id for u in created_records]}")
+        
+        # Log any failed users
+        if failed_users:
+            logger.warning(f"Some users failed to add: {failed_users}")
+        
+    except Exception as e:
+        logger.error(f"Error committing notification users: {str(e)}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to commit notification users: {str(e)}"
+        )
 
     return created_records
 
@@ -457,10 +231,12 @@ def delete_notification_user(
     current_user: dict = Depends(get_current_admin_user),
 ):
     """
-    Remove a user from clawback notification recipients.
+    Remove an admin/superadmin user from clawback notification recipients.
+    Only admin or super_admin users can trigger this API.
     """
-    if current_user["role"] not in ("admin", "super_admin"):
-        raise HTTPException(status_code=403, detail="Access denied")
+    # Validate current user is admin or super_admin
+    if current_user["role"] not in  ("Admin", "SuperAdmin"):
+        raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
 
     notification_user = (
         db.query(NotificationUser)
