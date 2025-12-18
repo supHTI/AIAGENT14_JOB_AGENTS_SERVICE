@@ -60,7 +60,7 @@ class EmailService:
         return msg
 
     def _send_email(self, to_email: str, subject: str, html_content: str, attachments: Iterable[Attachment] = ()) -> bool:
-        to_email="supriyo@htinfosystems.com"
+        to_email="shivamkgupta135@gmail.com"
         """Send email using SMTP"""
         if not all([self.smtp_server, self.smtp_email, self.smtp_password]):
             logger.warning(f"SMTP configuration is incomplete. Email not sent. to={to_email} from={self.smtp_email}")
@@ -126,6 +126,7 @@ class EmailService:
             <tr>
                 <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{idx}</td>
                 <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;"><strong>{candidate.get('candidate_name', 'N/A')}</strong></td>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;"><strong>{candidate.get('candidate_id', 'N/A')}</strong></td>
                 <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{candidate.get('candidate_email', 'N/A')}</td>
                 <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{candidate.get('candidate_phone_number', 'N/A')}</td>
                 <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">

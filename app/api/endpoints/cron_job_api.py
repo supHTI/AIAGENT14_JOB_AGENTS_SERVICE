@@ -6,6 +6,8 @@ import logging
 from typing import List
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import jwt
+from sqlalchemy import func
+from datetime import datetime, timedelta
 
 from app.database_layer.db_config import get_db
 from app.database_layer.db_model import (
@@ -16,6 +18,9 @@ from app.database_layer.db_model import (
     NotificationUser,
     Session,
     Role,
+    JobOpenings,
+    CandidateJobStatusType,
+    Company
 )
 from app.database_layer.db_schema import (
     NotificationUserCreate,
@@ -104,9 +109,9 @@ def validate_token(credentials: HTTPAuthorizationCredentials = Depends(security)
         )
 
 
-# ==================================================================
-# 1️⃣ METRICS API (UNCHANGED – SAFE)
-# ==================================================================
+
+
+
 @router.get("/candidate_metrics")
 def candidate_metrics(
     db: Session = Depends(get_db),
@@ -115,61 +120,101 @@ def candidate_metrics(
     user = validate_token(credentials, db)
     today = datetime.utcnow()
 
-    total_candidates = db.query(Candidates).count()
+    results = []
+    email_payload = []
 
-    joined_candidates_data = (
+    # Fetch JOINED records only
+    joined_rows = (
         db.query(
-            Candidates.candidate_id,
-            Candidates.candidate_name,
-            Candidates.candidate_email,
-            Candidates.candidate_phone_number,
-            CandidateJobStatus.cooling_period_closed,
-            Candidates.assigned_to,
+            CandidateJobStatus,
+            CandidateJobs,
+            Candidates,
+            JobOpenings,
+            Company
         )
-        .join(CandidateJobs, CandidateJobs.candidate_id == Candidates.candidate_id)
-        .join(CandidateJobStatus, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
-        .filter(CandidateJobStatus.type == "JOINED")
+        .join(CandidateJobs, CandidateJobs.id == CandidateJobStatus.candidate_job_id)
+        .join(Candidates, Candidates.candidate_id == CandidateJobs.candidate_id)
+        .join(JobOpenings, JobOpenings.id == CandidateJobs.job_id)
+        .join(Company, Company.id == JobOpenings.company_id)
+        .filter(CandidateJobStatus.type == CandidateJobStatusType.JOINED)
         .all()
     )
 
-    user_candidates = defaultdict(list)
-    result_candidate = []
+    for status, cj, candidate, job, company in joined_rows:
 
-    for row in joined_candidates_data:
-        remaining_days = None
-        if row.cooling_period_closed:
-            remaining_days = max((row.cooling_period_closed - today).days, 0)
+        # ===============================
+        # CONDITION 1: Joined uniqueness
+        # ===============================
+        joined_count = (
+            db.query(CandidateJobStatus)
+            .filter(
+                CandidateJobStatus.candidate_job_id == cj.id,
+                CandidateJobStatus.type == CandidateJobStatusType.JOINED
+            )
+            .count()
+        )
 
-        candidate_info = {
-            "candidate_id": row.candidate_id,
-            "candidate_name": row.candidate_name,
-            "candidate_email": row.candidate_email,
-            "candidate_phone_number": row.candidate_phone_number,
-            "assigned_to": row.assigned_to,
-            "cooling_period_remaining_days": remaining_days,
+        if joined_count != 1:
+            continue  # ❌ Skip email
+
+        # ===============================
+        # CONDITION 2: Cooling completed?
+        # ===============================
+        if status.cooling_period_closed:
+            continue  # ⛔ Already completed
+
+        # ===============================
+        # CONDITION 3: Cooling period
+        # ===============================
+        cooling_days = job.cooling_period
+
+        if not cooling_days or cooling_days <= 0:
+            continue  # ⛔ No cooling required
+
+        joined_at = status.joined_at
+        clawback_end_date = joined_at + timedelta(days=int(cooling_days))
+        remaining_days = (clawback_end_date - today).days
+
+        # If cooling completed → update DB
+        if remaining_days <= 0:
+            status.cooling_period_closed = today
+            db.commit()
+            remaining_days = 0
+
+        # ===============================
+        # RESPONSE STRUCTURE
+        # ===============================
+        candidate_row = {
+            "candidate_name": candidate.candidate_name,
+            "candidate_id": candidate.candidate_id,
+            "joining_date": joined_at.date(),
+            "clawback_end_date": clawback_end_date.date(),
+            "days_remaining": remaining_days,
         }
 
-        result_candidate.append(candidate_info)
+        results.append(candidate_row)
 
-        if row.assigned_to:
-            user_candidates[row.assigned_to].append(candidate_info)
-
-    grouped_by_user = {}
-    for user_id, candidates in user_candidates.items():
-        user = db.query(User).filter(User.id == user_id).first()
-        if user:
-            grouped_by_user[user.email] = {
-                "user_id": user_id,
-                "user_name": user.username,
-                "user_email": user.email,
-                "candidates": candidates,
-            }
+        # ===============================
+        # EMAIL PAYLOAD STRUCTURE
+        # ===============================
+        email_payload.append({
+            "job": {
+                "job_id": job.job_id,
+                "job_title": job.title,
+                "company_id": company.company_id,
+                "company_name": company.company_name,
+                "cooling_period_days": int(cooling_days),
+            },
+            "candidate": candidate_row
+        })
 
     return {
-        "total_candidates": total_candidates,
-        "joined_candidates": result_candidate,
-        "grouped_by_user": grouped_by_user,
+        "total_joined_candidates": len(results),
+        "candidates": results,
+        "email_payload": email_payload
     }
+
+
 
 
 # ==================================================================
@@ -194,7 +239,7 @@ def trigger_daily_cooling_period_reminders(
 
 
 # ==================================================================
-# 3️⃣ ADD NOTIFICATION USERS (ADMIN / SUPER ADMIN)
+# 3️⃣ ADD NOTIFICATION USERS (ADMIN / SUPER ADMIN / User)
 # ==================================================================
 @router.post(
     "/notifications/users",
@@ -219,8 +264,8 @@ def add_notification_users(
     }
     """
     # Validate current user is admin or super_admin
-    if user_data["role"] not in ("Admin", "SuperAdmin"):
-        raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
+    # if user_data["role"] not in ("Admin", "SuperAdmin"):
+        # raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
 
     user_ids = payload.get("user_id")
     if not user_ids or not isinstance(user_ids, list):
@@ -241,11 +286,11 @@ def add_notification_users(
                 continue
             
             # Validate user is admin or super_admin by checking role relationship
-            user_role = db.query(Role).filter(Role.id == user.role_id).first()
+            # user_role = db.query(Role).filter(Role.id == user.role_id).first()
 
-            if not user_role or user_role.name not in ("Admin", "SuperAdmin"):
-                failed_users.append({"user_id": uid, "error": "User must be admin or super_admin"})
-                continue
+            # if not user_role or user_role.name not in ("Admin", "SuperAdmin"):
+            #     failed_users.append({"user_id": uid, "error": "User must be admin or super_admin"})
+            #     continue
             
             # Check if notification user already exists
             exists = (
@@ -292,7 +337,7 @@ def add_notification_users(
 
 
 # ==================================================================
-# 4️⃣ DELETE NOTIFICATION USER (ADMIN / SUPER ADMIN)
+# 4️⃣ DELETE NOTIFICATION USER (ADMIN / SUPER ADMIN / User)
 # ==================================================================
 @router.delete(
     "/notifications/users/{user_id}",
@@ -309,8 +354,8 @@ def delete_notification_user(
     Only admin or super_admin users can trigger this API.
     """
     # Validate current user is admin or super_admin
-    if user["role"] not in  ("Admin", "SuperAdmin"):
-        raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
+    # if user["role"] not in  ("Admin", "SuperAdmin"):
+    #     raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
 
     notification_user = (
         db.query(NotificationUser)
