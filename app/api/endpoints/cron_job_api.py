@@ -1,11 +1,11 @@
-
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import datetime
 from collections import defaultdict
 import logging
 from typing import List
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import jwt
 
 from app.database_layer.db_config import get_db
 from app.database_layer.db_model import (
@@ -14,6 +14,8 @@ from app.database_layer.db_model import (
     CandidateJobStatus,
     User,
     NotificationUser,
+    Session,
+    Role,
 )
 from app.database_layer.db_schema import (
     NotificationUserCreate,
@@ -21,10 +23,13 @@ from app.database_layer.db_schema import (
 )
 from app.services.emailer import EmailService
 from app.celery.tasks.cooling_period_task import send_daily_cooling_period_reminders
+from app.core import settings
 
 logger = logging.getLogger("app_logger")
 
 router = APIRouter(prefix="/api", tags=["Cooling Period / Clawback"])
+security = HTTPBearer()
+
 # ------------------------------------------------------------------
 # 🔐 PLACEHOLDER: Replace with real auth dependency
 # ------------------------------------------------------------------
@@ -39,11 +44,75 @@ def get_current_admin_user():
     }
 
 
+# Fixing KeyError for 'role' by ensuring the role is fetched from the database
+
+def validate_token(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+    """
+    Validate the authentication token by decoding JWT and getting user information from sessions table.
+    """
+    token = credentials.credentials
+    try:
+        # Decode JWT token to get session_id
+        decoded_token = jwt.decode(
+            token, 
+            settings.JWT_SECRET_KEY, 
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"verify_exp": True}
+        )
+
+        session_id = decoded_token.get("sub")
+        if not session_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing session_id")
+
+        # Query sessions table to get user_id
+        session_record = db.query(Session).filter(
+            Session.session_id == session_id,
+            Session.is_active == True
+        ).first()
+
+        if not session_record:
+            raise HTTPException(status_code=401, detail="Invalid or expired session")
+
+        # Fetch user and role information
+        user = db.query(User).filter(User.id == session_record.user_id).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+
+        role = db.query(Role).filter(Role.id == user.role_id).first()
+        if not role:
+            raise HTTPException(status_code=401, detail="Role not found")
+
+        # Get user information
+        user_data = {
+            "id": user.id,
+            "session_id": session_id,
+            "role": role.name,
+        }
+
+        return user_data
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.InvalidSignatureError:
+        raise HTTPException(status_code=401, detail="Invalid token signature")
+    except jwt.DecodeError:
+        raise HTTPException(status_code=401, detail="Token cannot be decoded")
+    except Exception as e:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token or authentication failed"
+        )
+
+
 # ==================================================================
 # 1️⃣ METRICS API (UNCHANGED – SAFE)
 # ==================================================================
 @router.get("/candidate_metrics")
-def candidate_metrics(db: Session = Depends(get_db)):
+def candidate_metrics(
+    db: Session = Depends(get_db),
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    user = validate_token(credentials, db)
     today = datetime.utcnow()
 
     total_candidates = db.query(Candidates).count()
@@ -107,7 +176,11 @@ def candidate_metrics(db: Session = Depends(get_db)):
 # 2️⃣ MANUAL EMAIL TRIGGER (UNCHANGED)
 # ==================================================================
 @router.post("/trigger_daily_cooling_period_reminders")
-def trigger_daily_cooling_period_reminders():
+def trigger_daily_cooling_period_reminders(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+):
+    user = validate_token(credentials, db)
     try:
         task = send_daily_cooling_period_reminders.apply_async()
         return {
@@ -131,8 +204,9 @@ def trigger_daily_cooling_period_reminders():
 def add_notification_users(
     payload: dict,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_admin_user),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    user_data = validate_token(credentials, db)
     """
     Add admin/superadmin users who should receive manager-level clawback notifications.
     
@@ -145,7 +219,7 @@ def add_notification_users(
     }
     """
     # Validate current user is admin or super_admin
-    if current_user["role"] not in ("Admin", "SuperAdmin"):
+    if user_data["role"] not in ("Admin", "SuperAdmin"):
         raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
 
     user_ids = payload.get("user_id")
@@ -167,8 +241,7 @@ def add_notification_users(
                 continue
             
             # Validate user is admin or super_admin by checking role relationship
-            user_role = db.query(User).filter(User.id == uid).first().role
-            logger.error(f"user role {user_role.name} with user id{uid}", exc_info=True)
+            user_role = db.query(Role).filter(Role.id == user.role_id).first()
 
             if not user_role or user_role.name not in ("Admin", "SuperAdmin"):
                 failed_users.append({"user_id": uid, "error": "User must be admin or super_admin"})
@@ -187,7 +260,7 @@ def add_notification_users(
             # Create notification user
             notification_user = NotificationUser(
                 user_id=uid,
-                created_by=current_user["id"],
+                created_by=user_data["id"],
             )
             db.add(notification_user)
             db.flush()
@@ -228,14 +301,15 @@ def add_notification_users(
 def delete_notification_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_admin_user),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
+    user = validate_token(credentials, db)
     """
     Remove an admin/superadmin user from clawback notification recipients.
     Only admin or super_admin users can trigger this API.
     """
     # Validate current user is admin or super_admin
-    if current_user["role"] not in  ("Admin", "SuperAdmin"):
+    if user["role"] not in  ("Admin", "SuperAdmin"):
         raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
 
     notification_user = (
