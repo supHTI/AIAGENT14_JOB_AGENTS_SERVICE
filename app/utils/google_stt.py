@@ -9,6 +9,8 @@ import os
 from typing import List, Dict
 import io
 import re
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from google.genai.errors import ServerError
 
 logger = logging.getLogger("app_logger")
 
@@ -31,6 +33,16 @@ class GoogleSTT:
             logger.error(f"Failed to initialize Gemini client: {str(e)}")
             raise
     
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=1, min=2, max=10),
+           retry=retry_if_exception_type(ServerError))
+    def _retryable_generate_content(self, model, contents, config):
+        """Wrapper for retrying Gemini API calls."""
+        return self.client.models.generate_content(
+            model=model,
+            contents=contents,
+            config=config
+        )
+
     def transcribe(self, audio_content: bytes) -> List[Dict]:
         """
         Transcribe audio using Gemini API
@@ -67,9 +79,9 @@ class GoogleSTT:
             contents = [audio_part, prompt_part]
             gen_cfg = types.GenerateContentConfig()
             
-            # Call Gemini API
+            # Call Gemini API with retry logic
             logger.info("Sending audio to Gemini API...")
-            response = self.client.models.generate_content(
+            response = self._retryable_generate_content(
                 model=self.model,
                 contents=contents,
                 config=gen_cfg
@@ -89,6 +101,10 @@ class GoogleSTT:
             
             return segments
             
+        except ServerError as e:
+            logger.error(f"Gemini transcription failed with server error: {str(e)}")
+            raise
+
         except Exception as e:
             logger.error(f"Gemini transcription failed: {str(e)}")
             raise
@@ -145,29 +161,27 @@ class GoogleSTT:
         Returns:
             List of transcript segments
         """
-        from pydub import AudioSegment
-        
         try:
-            # Load audio
-            audio = AudioSegment.from_wav(io.BytesIO(audio_content))
-            
-            # Calculate chunk duration (aim for ~10MB chunks)
-            chunk_duration_ms = 5 * 60 * 1000  # 5 minutes per chunk
+            # For large files, split into smaller chunks
+            # WAV format: 44-byte header + audio data
+            # Split data into ~10MB chunks to avoid API limits
+            chunk_size = 10 * 1024 * 1024  # 10MB chunks
+            wav_header = audio_content[:44]  # Standard WAV header
+            audio_data = audio_content[44:]  # Audio data after header
             
             all_segments = []
             time_offset = 0.0
+            chunk_num = 1
             
-            # Split and process chunks
-            for i in range(0, len(audio), chunk_duration_ms):
-                chunk = audio[i:i + chunk_duration_ms]
+            # Process chunks
+            for i in range(0, len(audio_data), chunk_size):
+                chunk_data = audio_data[i:i + chunk_size]
                 
-                # Export chunk to WAV bytes
-                chunk_buffer = io.BytesIO()
-                chunk.export(chunk_buffer, format="wav")
-                chunk_bytes = chunk_buffer.getvalue()
+                # Reconstruct WAV chunk with header
+                chunk_bytes = wav_header + chunk_data
                 
                 chunk_size_mb = len(chunk_bytes) / (1024 * 1024)
-                logger.info(f"Processing chunk {i//chunk_duration_ms + 1}, size: {chunk_size_mb:.2f} MB")
+                logger.info(f"Processing chunk {chunk_num}, size: {chunk_size_mb:.2f} MB")
                 
                 # Detect mime type
                 mime_type = self._detect_mime_type(chunk_bytes)
@@ -186,8 +200,9 @@ class GoogleSTT:
                 contents = [audio_part, prompt_part]
                 gen_cfg = types.GenerateContentConfig()
                 
-                # Transcribe chunk
-                response = self.client.models.generate_content(
+                # Transcribe chunk with retry logic
+                logger.info(f"Sending chunk {chunk_num} to Gemini API...")
+                response = self._retryable_generate_content(
                     model=self.model,
                     contents=contents,
                     config=gen_cfg
@@ -207,7 +222,10 @@ class GoogleSTT:
                     all_segments.extend(chunk_segments)
                 
                 # Update time offset for next chunk
-                time_offset += len(chunk) / 1000.0
+                # Assuming 16kHz mono, 2 bytes per sample: duration = bytes / (16000 * 2)
+                chunk_duration_seconds = len(chunk_data) / (16000 * 2)
+                time_offset += chunk_duration_seconds
+                chunk_num += 1
             
             logger.info(f"Large audio transcription completed: {len(all_segments)} total segments")
             

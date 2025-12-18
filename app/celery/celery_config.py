@@ -60,7 +60,12 @@ celery_app.conf.update(
     beat_schedule={
         "test-cooling-period-reminders": {
             "task": "send_daily_cooling_period_reminders",
-            "schedule": 30.0,  # Every 30 seconds for testing
+            "schedule": crontab(hour=8, minute=0),  # Every 30 seconds for testing
+            "options": {"queue": "job_queue"},
+        },
+        "send-admin-cooling-period-summary": {
+            "task": "send_admin_cooling_period_summary",
+            "schedule": 30,  # Daily at 08:00 AM UTC
             "options": {"queue": "job_queue"},
         },
     },
