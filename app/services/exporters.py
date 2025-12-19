@@ -534,11 +534,6 @@ def _draw_pipeline_funnel_graph(
     # Return new Y position (below graph)
     final_y = y_bottom - 30
     
-    # Draw line after graph
-    c.setStrokeColor(colors.HexColor("#e2e8f0"))
-    c.setLineWidth(1)
-    c.line(x_start, final_y, x_start + chart_width, final_y)
-    
     return final_y - 20
 
 
@@ -551,9 +546,11 @@ def _draw_avg_time_line_graph(
     chart_width: float,
     chart_height: float,
     x_start: float = 40,
+    is_daily_report: bool = False,
 ) -> float:
     """
-    Draw a line graph showing average time in days for each pipeline stage, Accepted, and Rejected.
+    Draw a line graph showing average time in days/hours for each pipeline stage, Accepted, and Rejected.
+    For daily reports, values are in hours; for regular reports, values are in days.
     """
     y_bottom = y_pos - chart_height
     y_top = y_pos - 40
@@ -578,8 +575,19 @@ def _draw_avg_time_line_graph(
     all_labels.append("Rejected")
     all_values.append(avg_rejected_days)
     
-    if not all_labels:
-        return y_pos
+    # Always show graph, even if no data (show empty graph)
+    if not all_labels or not any(all_values):
+        # Draw empty graph with axes
+        y_bottom = y_pos - chart_height
+        y_top = y_pos - 40
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(1)
+        c.line(x_start, y_bottom, x_start, y_top)
+        c.line(x_start, y_bottom, x_start + chart_width, y_bottom)
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.HexColor("#666666"))
+        c.drawCentredString(x_start + chart_width / 2, y_bottom - 20, "No data available")
+        return y_bottom - 30
     
     # Calculate max value for Y-axis
     max_value = max(all_values) if all_values else 1
@@ -661,27 +669,55 @@ def _draw_velocity_line_graph(
     chart_width: float,
     chart_height: float,
     x_start: float = 40,
+    is_daily_report: bool = False,
 ) -> float:
     """
-    Draw a line graph showing pipeline velocity (movement per day).
+    Draw a line graph showing pipeline velocity (movement per day/hour).
+    For daily reports, shows hourly data; for regular reports, shows daily data.
     """
     y_bottom = y_pos - chart_height
     y_top = y_pos - 40
     
+    # Always show graph, even if no data (show empty graph)
     if not velocity_data:
-        return y_pos
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(1)
+        c.line(x_start, y_bottom, x_start, y_top)
+        c.line(x_start, y_bottom, x_start + chart_width, y_bottom)
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.HexColor("#666666"))
+        c.drawCentredString(x_start + chart_width / 2, y_bottom - 20, "No data available")
+        return y_bottom - 30
     
-    # Sort by date
-    sorted_data = sorted(velocity_data, key=lambda x: x.get("label", ""))
+    # Sort by label (date or hour)
+    # For proper sorting, we need to handle different label formats
+    def sort_key(item):
+        label = item.get("label", "")
+        # For hourly labels (HH:00), sort by hour number
+        if ":" in label:
+            try:
+                hour = int(label.split(":")[0])
+                return (0, hour)  # Type 0 for hourly
+            except:
+                return (1, label)  # Type 1 for others
+        # For date labels (DD-MM), sort by date
+        elif "-" in label and len(label) == 5:  # DD-MM format
+            try:
+                parts = label.split("-")
+                day, month = int(parts[0]), int(parts[1])
+                return (1, month, day)  # Type 1, sort by month then day
+            except:
+                return (2, label)  # Type 2 for others
+        else:
+            return (2, label)
     
-    # Prepare labels and values
+    sorted_data = sorted(velocity_data, key=sort_key)
+    
+    # Prepare labels and values (already limited to max 15 by data generation)
     labels = []
     values = []
     for item in sorted_data:
         label = item.get("label", "")
-        # Format date label (truncate if needed)
-        if len(label) > 8:
-            label = label[-5:]  # Take last 5 chars (e.g., "01-15")
         labels.append(label)
         values.append(item.get("moves", 0))
     
@@ -732,11 +768,25 @@ def _draw_velocity_line_graph(
             c.line(points[i][0], points[i][1], points[i+1][0], points[i+1][1])
     
     # Draw X-axis labels
+    # Data is already grouped to max 15 labels, so show all labels
     c.setFont("Helvetica", 7)
     c.setFillColor(colors.black)
-    for i, label in enumerate(labels):
-        x = x_start + (i * x_spacing)
-        c.drawCentredString(x, y_bottom - 15, label)
+    
+    # Always rotate labels if more than 8 points to prevent overlap
+    if num_points > 8:
+        # Rotate labels to prevent overlap
+        for i, label in enumerate(labels):
+            x = x_start + (i * x_spacing)
+            c.saveState()
+            c.translate(x, y_bottom - 25)
+            c.rotate(-45)
+            c.drawString(0, 0, label)
+            c.restoreState()
+    else:
+        # Show all labels normally for 8 or fewer points
+        for i, label in enumerate(labels):
+            x = x_start + (i * x_spacing)
+            c.drawCentredString(x, y_bottom - 15, label)
     
     # Draw Y-axis line
     c.setStrokeColor(colors.black)
@@ -770,8 +820,17 @@ def _draw_pipeline_flow_graph(
     for d in rejected_data or []:
         label_set.add(d.get("label"))
     labels = sorted(label_set)
+    # Always show graph, even if no data
     if not labels:
-        return y_pos
+        # Draw empty graph with axes
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(1)
+        c.line(x_start, y_bottom, x_start, y_top)
+        c.line(x_start, y_bottom, x_start + chart_width, y_bottom)
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.HexColor("#666666"))
+        c.drawCentredString(x_start + chart_width / 2, y_bottom - 20, "No data available")
+        return y_bottom - 30
 
     joined_map = {d.get("label"): d.get("count", 0) for d in (joined_data or [])}
     rejected_map = {d.get("label"): d.get("count", 0) for d in (rejected_data or [])}
@@ -1418,21 +1477,14 @@ def export_job_details_pdf(
     width, height = letter
     c.setTitle(title)
 
-    # IST Conversion
-    utc_now = datetime.now(timezone.utc)
-    ist_now = utc_now + timedelta(hours=5, minutes=30)
-    date_str = ist_now.strftime('%d-%b-%Y %I:%M %p IST')
-    
-    subtitle = f"Generated: {date_str}"
-    
-    # Date Range sub-text
+    # Date Range sub-text (removed "Generated" date as requested)
+    subtitle = ""
     d_start, d_end = date_range
     if d_start and d_end:
         range_str = f"{d_start.strftime('%d %b %Y')} - {d_end.strftime('%d %b %Y')}"
+        subtitle = f"Range: {range_str}"
     else:
-        range_str = "All Time"
-        
-    subtitle += f" | Range: {range_str}"
+        subtitle = "All Time"
     
     if generated_by:
         subtitle += f" | By: {generated_by}"
@@ -1459,17 +1511,14 @@ def export_job_details_pdf(
         c.setFont("Helvetica", 10)
         c.setFillColor(colors.black)
         
-        # Job Title
+        # Job Title (left) and Company Name (right) on same line
         job_title = job_metadata.get("job_title", "N/A")
-        c.drawString(40, y, f"Job Title: {job_title}")
-        y -= 16
-        
-        # Company Name
         company_name = job_metadata.get("company_name", "N/A")
-        c.drawString(40, y, f"Company Name: {company_name}")
+        c.drawString(40, y, f"Job Title: {job_title}")
+        c.drawRightString(width - 40, y, f"Company Name: {company_name}")
         y -= 16
         
-        # Job Creation Date
+        # Job Creation Date (left) and Status (right) on same line
         created_at = job_metadata.get("created_at")
         if created_at:
             if isinstance(created_at, datetime):
@@ -1478,12 +1527,9 @@ def export_job_details_pdf(
                 created_at_str = str(created_at)
         else:
             created_at_str = "N/A"
-        c.drawString(40, y, f"Job Creation Date: {created_at_str}")
-        y -= 16
-        
-        # Status
         status = job_metadata.get("status", "N/A")
-        c.drawString(40, y, f"Status: {status}")
+        c.drawString(40, y, f"Job Creation Date: {created_at_str}")
+        c.drawRightString(width - 40, y, f"Status: {status}")
         y -= 20
         
         # Line separator
@@ -1527,22 +1573,37 @@ def export_job_details_pdf(
         avg_rejected = avg_times.get("rejected_days", 0)
         velocity_data = extras.get("pipeline_velocity", []) if extras else []
         
+        # Detect graph type from extras
+        graph_type = extras.get("graph_type", "daily") if extras else "daily"
+        is_daily_report = extras.get("is_daily", False) if extras else False
+        
+        # Determine time unit and velocity title based on graph type
+        if graph_type == "hourly":
+            time_unit = "Hours"
+            velocity_title = "Pipeline Velocity (Movement per Hour)"
+        elif graph_type == "weekly":
+            time_unit = "Days"
+            velocity_title = "Pipeline Velocity (Movement per Week)"
+        else:
+            time_unit = "Days"
+            velocity_title = "Pipeline Velocity (Movement per Day)"
+        
         # Left graph: Avg Time per Stage
         graph_y = y
         c.setFont("Helvetica-Bold", 10)
         c.setFillColor(colors.HexColor("#0f172a"))
-        c.drawString(margin, graph_y, "Avg Time in Each Stage (Days)")
+        c.drawString(margin, graph_y, f"Avg Time in Each Stage ({time_unit})")
         graph_y -= 15
-        y_left = _draw_avg_time_line_graph(c, graph_y, stage_times, avg_accepted, avg_rejected, chart_width, chart_height, margin)
+        y_left = _draw_avg_time_line_graph(c, graph_y, stage_times, avg_accepted, avg_rejected, chart_width, chart_height, margin, is_daily_report=(graph_type == "hourly"))
         
         # Right graph: Pipeline Velocity
         x_right_start = margin + chart_width + margin
         graph_y = y
         c.setFont("Helvetica-Bold", 10)
         c.setFillColor(colors.HexColor("#0f172a"))
-        c.drawString(x_right_start, graph_y, "Pipeline Velocity (Movement per Day)")
+        c.drawString(x_right_start, graph_y, velocity_title)
         graph_y -= 15
-        y_right = _draw_velocity_line_graph(c, graph_y, velocity_data, chart_width, chart_height, x_right_start)
+        y_right = _draw_velocity_line_graph(c, graph_y, velocity_data, chart_width, chart_height, x_right_start, is_daily_report=(graph_type == "hourly"))
         
         # Use the lower Y position
         y = min(y_left, y_right) - 20
@@ -1553,22 +1614,22 @@ def export_job_details_pdf(
         c.line(margin, y, width - margin, y)
         y -= 30
         
-        # Draw Pipeline Flow graph (Joined vs Rejected)
+        # Draw Pipeline Flow graph (Joined vs Rejected) - Always show, even if no data
         joined_datewise_data = extras.get("joined_datewise", []) if extras else []
         rejected_datewise_data = extras.get("rejected_datewise", []) if extras else []
-        if joined_datewise_data or rejected_datewise_data:
-            c.setFont("Helvetica-Bold", 10)
-            c.setFillColor(colors.HexColor("#0f172a"))
-            c.drawString(margin, y, "Pipeline Flow (Joined vs Rejected/Drop)")
-            y -= 15
-            full_chart_width = width - (2 * margin)
-            y = _draw_pipeline_flow_graph(c, y, joined_datewise_data, rejected_datewise_data, full_chart_width, chart_height, margin)
-            
-            # Draw line after graph
-            c.setStrokeColor(colors.HexColor("#e2e8f0"))
-            c.setLineWidth(1)
-            c.line(margin, y, width - margin, y)
-            y -= 20
+        # Always show the graph, even if no data
+        c.setFont("Helvetica-Bold", 10)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Pipeline Flow (Joined vs Rejected/Drop)")
+        y -= 15
+        full_chart_width = width - (2 * margin)
+        y = _draw_pipeline_flow_graph(c, y, joined_datewise_data, rejected_datewise_data, full_chart_width, chart_height, margin)
+        
+        # Draw line after graph
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.setLineWidth(1)
+        c.line(margin, y, width - margin, y)
+        y -= 20
 
     # Draw Recruiter Metrics page (3rd page)
     recruiter_metrics = extras.get("recruiter_metrics", {}) if extras else {}
@@ -1613,7 +1674,8 @@ def export_job_details_pdf(
         
         # Top Recruiters Ranking Table
         top_recruiters = recruiter_metrics.get("top_recruiters_ranking", [])
-        recruiter_assignments = recruiter_metrics.get("recruiter_assignments") or []
+        # Get recruiter_assignments from extras first (for daily report), then from recruiter_metrics
+        recruiter_assignments = extras.get("recruiter_assignments") or recruiter_metrics.get("recruiter_assignments") or []
         assignment_map = {a.get("recruiter_name"): a for a in recruiter_assignments if a.get("recruiter_name")}
         if top_recruiters:
             y -= 20
@@ -1650,7 +1712,7 @@ def export_job_details_pdf(
                 c.drawString(margin + 60, y, name)
                 # Get total candidates assigned for this recruiter (from recruiter_assignments)
                 total_assigned = assignment_map.get(recruiter.get("recruiter_name")) or {}
-                assigned_val = total_assigned.get("assigned", 0)
+                assigned_val = total_assigned.get("candidates", 0)
                 c.drawString(width - 210, y, str(assigned_val))
                 c.drawString(width - 90, y, str(closed))
                 y -= 15
@@ -1660,19 +1722,33 @@ def export_job_details_pdf(
             c.line(margin, y, width - margin, y)
             y -= 20
         
-        # Recruiter assignment table
+        # Recruiter Details table
         if recruiter_assignments:
             if y < 180:
                 c.showPage()
                 _draw_header_footer(c, title, subtitle)
                 y = height - 110
+            
+            # Check if this is a daily report or date range report (has tag_based_candidates_daily)
+            # For date ranges, we also show tag-based candidate tables
+            is_daily_report = extras.get("tag_based_candidates_daily") is not None
+            
             c.setFillColor(colors.HexColor("#0f172a"))
             c.setFont("Helvetica-Bold", 12)
-            c.drawString(margin, y, "Recruiter Assignments")
+            c.drawString(margin, y, "Recruiter Details")
             y -= 18
             c.setFont("Helvetica-Bold", 9)
-            headers = ["Recruiter", "Assigned", "Joined", "Rejected/Dropped"]
-            col_widths = [180, 80, 80, 110]
+            
+            if is_daily_report:
+                # Daily report: include tag-based fields
+                # Adjust widths to fit page (total width ~532 with margins, using smaller font)
+                headers = ["Recruiter", "Candidates", "Sourced", "Screened", "Lined Up", "Turned Up", "Offer Accepted", "Joined", "Rejected", "Active"]
+                col_widths = [85, 55, 42, 42, 42, 55, 70, 42, 45, 38]
+            else:
+                # Regular report: original headers
+                headers = ["Recruiter", "Candidates", "Joined", "Rejected", "Active"]
+                col_widths = [150, 80, 70, 110, 60]
+            
             current_x = margin
             for w, h in zip(col_widths, headers):
                 c.drawString(current_x, y, h)
@@ -1681,7 +1757,7 @@ def export_job_details_pdf(
             c.setStrokeColor(colors.HexColor("#e2e8f0"))
             c.line(margin, y, width - margin, y)
             y -= 12
-            c.setFont("Helvetica", 9)
+            c.setFont("Helvetica", 8)  # Smaller font for more columns
             for row in recruiter_assignments:
                 if y < 70:
                     c.showPage()
@@ -1689,7 +1765,7 @@ def export_job_details_pdf(
                     y = height - 110
                     c.setFillColor(colors.HexColor("#0f172a"))
                     c.setFont("Helvetica-Bold", 12)
-                    c.drawString(margin, y, "Recruiter Assignments")
+                    c.drawString(margin, y, "Recruiter Details")
                     y -= 18
                     c.setFont("Helvetica-Bold", 9)
                     current_x = margin
@@ -1700,22 +1776,137 @@ def export_job_details_pdf(
                     c.setStrokeColor(colors.HexColor("#e2e8f0"))
                     c.line(margin, y, width - margin, y)
                     y -= 12
-                    c.setFont("Helvetica", 9)
-                vals = [
-                    row.get("recruiter_name", "N/A")[:28] + ("..." if len(str(row.get("recruiter_name",""))) > 28 else ""),
-                    str(row.get("assigned", 0)),
-                    str(row.get("joined", 0)),
-                    str(row.get("rejected", 0)),
-                ]
+                    c.setFont("Helvetica", 8)
+                active_status = "Yes" if row.get("active", False) else "No"
+                recruiter_name = row.get("recruiter_name", "N/A")
+                # Truncate based on whether it's daily report (more columns = less space)
+                max_len = 12 if is_daily_report else 20
+                if len(recruiter_name) > max_len:
+                    recruiter_name = recruiter_name[:max_len-3] + "..."
+                
+                if is_daily_report:
+                    vals = [
+                        recruiter_name,
+                        str(row.get("candidates", 0)),
+                        str(row.get("sourced", 0)),
+                        str(row.get("screened", 0)),
+                        str(row.get("lined_up", 0)),
+                        str(row.get("turned_up", 0)),
+                        str(row.get("offer_accepted", 0)),
+                        str(row.get("joined", 0)),
+                        str(row.get("rejected", 0)),
+                        active_status,
+                    ]
+                else:
+                    vals = [
+                        recruiter_name,
+                        str(row.get("candidates", 0)),
+                        str(row.get("joined", 0)),
+                        str(row.get("rejected", 0)),
+                        active_status,
+                    ]
                 current_x = margin
                 for w, v in zip(col_widths, vals):
                     c.drawString(current_x, y, v)
                     current_x += w
-                y -= 14
+                y -= 12
             y -= 16
             c.setStrokeColor(colors.HexColor("#e2e8f0"))
             c.line(margin, y, width - margin, y)
             y -= 18
+            
+            # Add tag-based candidate detail tables (for daily reports and date ranges)
+            tag_based_candidates = extras.get("tag_based_candidates_daily") or {}
+            if tag_based_candidates:  # Show tables if we have tag-based candidate data
+                tag_configs = [
+                    ("sourced", "Sourced Candidates"),
+                    ("screened", "Screened Candidates"),
+                    ("lined_up", "Lined Up Candidates"),
+                    ("turned_up", "Turned Up Candidates"),
+                    ("offer_accepted", "Offer Accepted Candidates"),
+                ]
+                
+                for tag_key, tag_title in tag_configs:
+                    candidates_list = tag_based_candidates.get(tag_key, [])
+                    # Always show the table, even if empty (to show structure)
+                    if True:  # Always render the table
+                        if y < 180:
+                            c.showPage()
+                            _draw_header_footer(c, title, subtitle)
+                            y = height - 110
+                        c.setFillColor(colors.HexColor("#0f172a"))
+                        c.setFont("Helvetica-Bold", 12)
+                        c.drawString(margin, y, tag_title)
+                        y -= 18
+                        c.setFont("Helvetica-Bold", 9)
+                        detail_headers = ["Candidate ID", "Candidate Name", "HR Name", "Date & Time"]
+                        # Adjusted widths to fit page: [80, 125, 95, 135] = 435 points (within 532 limit)
+                        # Candidate ID gets 80 to prevent overlap, names can be cropped
+                        detail_col_widths = [180, 125, 120, 135]
+                        current_x = margin
+                        for w, h in zip(detail_col_widths, detail_headers):
+                            c.drawString(current_x, y, h)
+                            current_x += w
+                        y -= 10
+                        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                        c.line(margin, y, width - margin, y)
+                        y -= 12
+                        c.setFont("Helvetica", 8)  # Smaller font for better fit
+                        if candidates_list:
+                            for candidate in candidates_list:
+                                if y < 70:
+                                    c.showPage()
+                                    _draw_header_footer(c, title, subtitle)
+                                    y = height - 110
+                                    c.setFillColor(colors.HexColor("#0f172a"))
+                                    c.setFont("Helvetica-Bold", 12)
+                                    c.drawString(margin, y, tag_title)
+                                    y -= 18
+                                    c.setFont("Helvetica-Bold", 9)
+                                    current_x = margin
+                                    for w, h in zip(detail_col_widths, detail_headers):
+                                        c.drawString(current_x, y, h)
+                                        current_x += w
+                                    y -= 10
+                                    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                                    c.line(margin, y, width - margin, y)
+                                    y -= 12
+                                    c.setFont("Helvetica", 8)
+                                # Get values and crop names if needed, but keep candidate_id intact
+                                candidate_id_str = str(candidate.get("candidate_id", "N/A"))
+                                candidate_name = candidate.get("candidate_name", "N/A")
+                                hr_name = candidate.get("hr_name", "N/A")
+                                date_time = candidate.get("created_at", "N/A")
+                                
+                                # Crop candidate name if too long (max ~17 chars for 125 width)
+                                if len(candidate_name) > 17:
+                                    candidate_name = candidate_name[:14] + "..."
+                                
+                                # Crop HR name if too long (max ~13 chars for 95 width)
+                                if len(hr_name) > 13:
+                                    hr_name = hr_name[:10] + "..."
+                                
+                                detail_vals = [
+                                    candidate_id_str,  # Keep candidate_id intact, no cropping
+                                    candidate_name,
+                                    hr_name,
+                                    date_time,
+                                ]
+                                current_x = margin
+                                for w, v in zip(detail_col_widths, detail_vals):
+                                    c.drawString(current_x, y, v)
+                                    current_x += w
+                                y -= 12
+                        else:
+                            # Show "No candidates" message if list is empty
+                            c.setFont("Helvetica", 9)
+                            c.setFillColor(colors.HexColor("#666666"))
+                            c.drawString(margin, y, "No candidates found for this tag in the selected date range.")
+                            y -= 14
+                        y -= 16
+                        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                        c.line(margin, y, width - margin, y)
+                        y -= 20
 
         # Clawback total cases graph removed per request
         
@@ -1766,48 +1957,93 @@ def export_job_details_pdf(
             y = _draw_recruiter_bar_graph(c, y, rejected_dropped, "rejected_count", "Rejected/Dropped", width - (2 * margin), 200, margin)
 
     # --- Clawback Metrics page ---
+    # Always show clawback metrics page, even if no data
     clawback_metrics = extras.get("clawback_metrics", {}) if extras else {}
-    if clawback_metrics:
+    # Always show the page
+    c.showPage()
+    _draw_header_footer(c, title, subtitle)
+    y = height - 110
+
+    c.setFillColor(colors.HexColor("#0f172a"))
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(margin, y, "Clawback Metrics")
+    y -= 48
+
+    clawback_tiles = [
+        ("Total Clawback Cases", clawback_metrics.get("total_cases", 0)),
+        ("Clawback Completed", clawback_metrics.get("completed", 0)),
+        ("Clawback Dropped", clawback_metrics.get("dropped", 0)),
+        ("Clawback Pending", clawback_metrics.get("pending", 0)),
+    ]
+    y = _draw_tiles(c, clawback_tiles, y)
+
+    # Recovery rate line graph (pending_vs_recovered kept for recovery vs pending/dropped)
+    # Always show, even if no data
+    pending_vs_rec = clawback_metrics.get("pending_vs_recovered", [])
+    if pending_vs_rec:
+        line_data = []
+        for item in pending_vs_rec:
+            label = item.get("label", "")
+            value = item.get("value", 0)
+            line_data.append({"label": label, "value": value})
+        if line_data:
+            if y < 260:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+            c.setFont("Helvetica-Bold", 12)
+            c.setFillColor(colors.HexColor("#0f172a"))
+            c.drawString(margin, y, "Clawback Recovery Rate")
+            y -= 20
+            y = _draw_recovery_line_graph(c, y, line_data, width - (2 * margin), 180, margin)
+            y -= 12
+    else:
+        # Show empty graph if no data
+        if y < 260:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Clawback Recovery Rate")
+        y -= 20
+        # Draw empty graph
+        chart_width = width - (2 * margin)
+        chart_height = 180
+        y_bottom = y - chart_height
+        y_top = y - 40
+        c.setStrokeColor(colors.black)
+        c.setLineWidth(1)
+        c.line(margin, y_bottom, margin, y_top)
+        c.line(margin, y_bottom, margin + chart_width, y_bottom)
+        c.setFont("Helvetica", 8)
+        c.setFillColor(colors.HexColor("#666666"))
+        c.drawCentredString(margin + chart_width / 2, y_bottom - 20, "No data available")
+        y = y_bottom - 30
+
+    # Clawback Completed Today table - Always show, even if no data
+    completed_today = clawback_metrics.get("completed_today", [])
+    if y < 180:
         c.showPage()
         _draw_header_footer(c, title, subtitle)
         y = height - 110
-
-        c.setFillColor(colors.HexColor("#0f172a"))
-        c.setFont("Helvetica-Bold", 18)
-        c.drawString(margin, y, "Clawback Metrics")
-        y -= 48
-
-        clawback_tiles = [
-            ("Total Clawback Cases", clawback_metrics.get("total_cases", 0)),
-            ("Clawback Completed", clawback_metrics.get("completed", 0)),
-            ("Clawback Dropped", clawback_metrics.get("dropped", 0)),
-            ("Clawback Pending", clawback_metrics.get("pending", 0)),
-        ]
-        y = _draw_tiles(c, clawback_tiles, y)
-
-        # Recovery rate line graph (pending_vs_recovered kept for recovery vs pending/dropped)
-        pending_vs_rec = clawback_metrics.get("pending_vs_recovered", [])
-        if pending_vs_rec:
-            line_data = []
-            for item in pending_vs_rec:
-                label = item.get("label", "")
-                value = item.get("value", 0)
-                line_data.append({"label": label, "value": value})
-            if line_data:
-                if y < 260:
-                    c.showPage()
-                    _draw_header_footer(c, title, subtitle)
-                    y = height - 110
-                c.setFont("Helvetica-Bold", 12)
-                c.setFillColor(colors.HexColor("#0f172a"))
-                c.drawString(margin, y, "Clawback Recovery Rate")
-                y -= 20
-                y = _draw_recovery_line_graph(c, y, line_data, width - (2 * margin), 180, margin)
-                y -= 12
-
-        # Clawback Completed Today table
-        completed_today = clawback_metrics.get("completed_today", [])
-        if completed_today:
+    c.setFillColor(colors.HexColor("#0f172a"))
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(margin, y, "Clawback Completed Today")
+    y -= 18
+    headers = ["Candidate", "Recruiter", "Joined On", "Completion Date"]
+    col_widths = [150, 150, 100, 110]
+    c.setFont("Helvetica-Bold", 9)
+    current_x = margin
+    for w, h in zip(col_widths, headers):
+        c.drawString(current_x, y, h)
+        current_x += w
+    y -= 10
+    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+    c.line(margin, y, width - margin, y)
+    y -= 12
+    c.setFont("Helvetica", 9)
+    if completed_today:
             if y < 180:
                 c.showPage()
                 _draw_header_footer(c, title, subtitle)
@@ -1858,32 +2094,35 @@ def export_job_details_pdf(
                     c.drawString(current_x, y, v)
                     current_x += w
                 y -= 14
-            y -= 14
+    else:
+        c.drawString(margin, y, "No data available")
+        y -= 14
+    y -= 14
 
-        # Clawback Drop or Rejected Today
-        drop_today = clawback_metrics.get("drop_today", [])
-        if drop_today:
-            if y < 160:
-                c.showPage()
-                _draw_header_footer(c, title, subtitle)
-                y = height - 110
-            c.setFillColor(colors.HexColor("#0f172a"))
-            c.setFont("Helvetica-Bold", 12)
-            c.drawString(margin, y, "Clawback Drop or Rejected Today")
-            y -= 18
-            headers = ["Candidate", "Status", "Date"]
-            col_widths = [180, 140, 100]
-            c.setFont("Helvetica-Bold", 9)
-            current_x = margin
-            for w, h in zip(col_widths, headers):
-                c.drawString(current_x, y, h)
-                current_x += w
-            y -= 10
-            c.setStrokeColor(colors.HexColor("#e2e8f0"))
-            c.line(margin, y, width - margin, y)
-            y -= 12
-            c.setFont("Helvetica", 9)
-            for row in drop_today:
+    # Clawback Drop or Rejected Today - Always show, even if no data
+    drop_today = clawback_metrics.get("drop_today", [])
+    if y < 160:
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        y = height - 110
+    c.setFillColor(colors.HexColor("#0f172a"))
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(margin, y, "Clawback Drop or Rejected Today")
+    y -= 18
+    headers = ["Candidate", "Status", "Date"]
+    col_widths = [180, 140, 100]
+    c.setFont("Helvetica-Bold", 9)
+    current_x = margin
+    for w, h in zip(col_widths, headers):
+        c.drawString(current_x, y, h)
+        current_x += w
+    y -= 10
+    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+    c.line(margin, y, width - margin, y)
+    y -= 12
+    c.setFont("Helvetica", 9)
+    if drop_today:
+        for row in drop_today:
                 if y < 60:
                     c.showPage()
                     _draw_header_footer(c, title, subtitle)
@@ -1912,10 +2151,34 @@ def export_job_details_pdf(
                     c.drawString(current_x, y, v)
                     current_x += w
                 y -= 14
+    else:
+        c.drawString(margin, y, "No data available")
+        y -= 14
+    y -= 14
 
-        # Clawback candidate details table (all cases)
-        clawback_details = clawback_metrics.get("all_cases", [])
-        if clawback_details:
+    # Clawback candidate details table (all cases) - Always show, even if no data
+    clawback_details = clawback_metrics.get("all_cases", [])
+    if y < 200:
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        y = height - 110
+    c.setFillColor(colors.HexColor("#0f172a"))
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(margin, y, "Clawback Candidate Details")
+    y -= 18
+    headers = ["Candidate", "Recruiter", "Joined On", "Completion", "Status"]
+    col_widths = [120, 120, 90, 90, 80]
+    c.setFont("Helvetica-Bold", 9)
+    current_x = margin
+    for w, h in zip(col_widths, headers):
+        c.drawString(current_x, y, h)
+        current_x += w
+    y -= 10
+    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+    c.line(margin, y, width - margin, y)
+    y -= 12
+    c.setFont("Helvetica", 9)
+    if clawback_details:
             if y < 200:
                 c.showPage()
                 _draw_header_footer(c, title, subtitle)

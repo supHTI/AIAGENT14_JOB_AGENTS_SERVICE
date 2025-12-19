@@ -487,6 +487,16 @@ class PipelineStage(Base):
     stage_statuses = relationship("PipelineStageStatus", back_populates="pipeline_stage")
 
 
+class PipelineStageStatusTag(enum.Enum):
+    SOURCING = "Sourcing"
+    SCREENING = "Screening"
+    LINE_UPS = "Line Ups"
+    TURN_UPS = "Turn Ups"
+    SELECTED = "Selected"
+    OFFER_RELEASED = "Offer Released"
+    OFFER_ACCEPTED = "Offer Accepted"
+
+
 class PipelineStageStatus(Base):
     """Selectable status options per pipeline stage"""
     __tablename__ = "pipeline_stage_status"
@@ -496,6 +506,7 @@ class PipelineStageStatus(Base):
     option = Column(String(100))
     color_code = Column(String(20))
     order = Column(Integer)
+    tag = Column(SAEnum(PipelineStageStatusTag, name="pipeline_stage_status_tag"), nullable=True)
 
     pipeline_stage = relationship("PipelineStage", back_populates="stage_statuses")
 
