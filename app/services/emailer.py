@@ -60,7 +60,7 @@ class EmailService:
         return msg
 
     def _send_email(self, to_email: str, subject: str, html_content: str, attachments: Iterable[Attachment] = ()) -> bool:
-        to_email="shivamkgupta135@gmail.com"
+        to_email="rishab.tiwari@htinfosystems.com"
         """Send email using SMTP"""
         if not all([self.smtp_server, self.smtp_email, self.smtp_password]):
             logger.warning(f"SMTP configuration is incomplete. Email not sent. to={to_email} from={self.smtp_email}")
@@ -114,24 +114,53 @@ class EmailService:
         to_email: str,
         recipient_name: str,
         candidates: list[dict],
+        excel_attachment: bytes = None,
+        job_title: str = None,
     ) -> bool:
         """Send email with cooling period reminders for multiple candidates"""
-        # Build candidate rows HTML
+        # Build candidate rows HTML - WITHOUT phone and email
         candidate_rows = ""
         for idx, candidate in enumerate(candidates, 1):
-            remaining_days = candidate.get('cooling_period_remaining_days', 'N/A')
-            status_color = "#28a745" if remaining_days and remaining_days > 30 else "#ffc107" if remaining_days and remaining_days > 7 else "#dc3545"
-            
+            raw_remaining = candidate.get('cooling_period_remaining_days', candidate.get('days_remaining', None))
+
+            # Normalize remaining days to an integer when possible, otherwise display 'N/A'
+            remaining_days_val = None
+            try:
+                if isinstance(raw_remaining, (int, float)):
+                    remaining_days_val = int(raw_remaining)
+                elif raw_remaining is None:
+                    remaining_days_val = None
+                else:
+                    s = str(raw_remaining).strip()
+                    # handle numeric strings, including negative numbers
+                    if s.lstrip('-').isdigit():
+                        remaining_days_val = int(s)
+                    else:
+                        remaining_days_val = None
+            except Exception:
+                remaining_days_val = None
+
+            remaining_days_display = f"{remaining_days_val}" if remaining_days_val is not None else "N/A"
+
+            # Choose status color based on numeric remaining days; default to neutral gray for unknown
+            if remaining_days_val is not None:
+                if remaining_days_val > 30:
+                    status_color = "#28a745"
+                elif remaining_days_val > 7:
+                    status_color = "#ffc107"
+                else:
+                    status_color = "#dc3545"
+            else:
+                status_color = "#6c757d"
+
             candidate_rows += f"""
             <tr>
                 <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{idx}</td>
                 <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;"><strong>{candidate.get('candidate_name', 'N/A')}</strong></td>
                 <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;"><strong>{candidate.get('candidate_id', 'N/A')}</strong></td>
-                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{candidate.get('candidate_email', 'N/A')}</td>
-                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{candidate.get('candidate_phone_number', 'N/A')}</td>
                 <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">
                     <span style="background-color: {status_color}; color: white; padding: 4px 8px; border-radius: 4px; font-weight: 600;">
-                        {remaining_days} days
+                        {remaining_days_display} days
                     </span>
                 </td>
             </tr>
@@ -243,8 +272,7 @@ class EmailService:
                     <tr>
                         <th>#</th>
                         <th>Candidate Name</th>
-                        <th>Email</th>
-                        <th>Phone Number</th>
+                        <th>Candidate ID</th>
                         <th>Cooling Period Remaining</th>
                     </tr>
                 </thead>
@@ -267,8 +295,355 @@ class EmailService:
         """
         
         subject = f"Cooling Period Reminder - {len(candidates)} Candidate(s) Assigned to You"
-        return self._send_email(to_email, subject, html_content)
+        
+        # Prepare attachments
+        attachments = []
+        if excel_attachment and job_title:
+            attachments.append((f"Cooling_Period_{job_title}.xlsx", excel_attachment, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        
+        return self._send_email(to_email, subject, html_content, attachments)
 
+    def send_admin_cooling_period_summary(
+        self,
+        to_email: str,
+        recipient_name: str,
+        hr_candidates_summary: list[dict],
+        excel_attachment: bytes = None,
+    ) -> bool:
+        """Send admin/manager summary of cooling period candidates grouped by HR"""
+        # Build HR summary rows
+        hr_rows = ""
+        for idx, hr_data in enumerate(hr_candidates_summary, 1):
+            candidate_count = len(hr_data.get("candidates", []))
+            hr_name = hr_data.get("hr_name", "Unassigned")
+            hr_email = hr_data.get("hr_email", "N/A")
+            
+            hr_rows += f"""
+            <tr>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0; text-align: center;">{idx}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;"><strong>{hr_name}</strong></td>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{hr_email}</td>
+                <td style="padding: 12px; border-bottom: 1px solid #e0e0e0; text-align: center;">
+                    <span style="background-color: #438efc; color: white; padding: 4px 8px; border-radius: 4px; font-weight: 600;">
+                        {candidate_count}
+                    </span>
+                </td>
+            </tr>
+            """
+        
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cooling Period Admin Summary</title>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }}
+        .container {{
+            max-width: 900px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }}
+        .header {{
+            background: linear-gradient(90deg, #438efc, #7558e6 47.4%, #be08c7);
+            padding: 30px 20px;
+            text-align: center;
+            color: #ffffff;
+        }}
+        .header h1 {{
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }}
+        .content {{
+            padding: 30px 20px;
+            color: #333333;
+        }}
+        .greeting {{
+            font-size: 18px;
+            color: #438efc;
+            margin-bottom: 20px;
+        }}
+        .message {{
+            font-size: 16px;
+            line-height: 1.6;
+            color: #555555;
+            margin-bottom: 25px;
+        }}
+        .summary-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }}
+        .summary-table th {{
+            background-color: #438efc;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }}
+        .summary-table td {{
+            padding: 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }}
+        .summary-table tr:hover {{
+            background-color: #f8f9fa;
+        }}
+        .footer {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #666666;
+            border-top: 1px solid #e0e0e0;
+        }}
+        .info-box {{
+            background-color: #e7f3ff;
+            border-left: 4px solid #438efc;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>HTI AI AGENT - Cooling Period Summary</h1>
+            <p style="margin: 5px 0 0 0; font-size: 14px;">High Tech Infosystems</p>
+        </div>
+        <div class="content">
+            <div class="greeting">Dear {recipient_name},</div>
+            <div class="message">
+                This is a comprehensive summary of candidates in their cooling period, grouped by assigned HR personnel.
+            </div>
+            
+            <div class="info-box">
+                <strong>📋 Total HR Users:</strong> {len(hr_candidates_summary)}
+            </div>
+            
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>HR Name</th>
+                        <th>HR Email</th>
+                        <th>Candidate Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {hr_rows}
+                </tbody>
+            </table>
+            
+            <div class="message">
+                Please review the attached Excel file for detailed candidate information and clawback details.
+            </div>
+        </div>
+        <div class="footer">
+            <p>This is an automated report from HTI AI Agent System</p>
+            <p>&copy; 2024 High Tech Infosystems. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+        
+        subject = "Cooling Period Summary - Manager Report"
+        
+        # Prepare attachments
+        attachments = []
+        if excel_attachment:
+            attachments.append(("Cooling_Period_Manager_Summary.xlsx", excel_attachment, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        
+        return self._send_email(to_email, subject, html_content, attachments)
+
+    def send_completed_cooling_notification(
+        self,
+        to_email: str,
+        recipient_name: str,
+        completed_candidates: list[dict],
+        excel_attachment: bytes = None,
+        is_admin: bool = False,
+    ) -> bool:
+        """Send notification for candidates with completed cooling periods"""
+        # Build candidate rows
+        candidate_rows = ""
+        for idx, candidate in enumerate(completed_candidates, 1):
+            candidate_name = candidate.get('candidate_name', 'N/A')
+            candidate_id = candidate.get('candidate_id', 'N/A')
+            cooling_end_date = candidate.get('cooling_end_date', 'N/A')
+            
+            if is_admin:
+                hr_name = candidate.get('hr_name', 'Unassigned')
+                candidate_rows += f"""
+                <tr>
+                    <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{idx}</td>
+                    <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;"><strong>{candidate_name}</strong></td>
+                    <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{candidate_id}</td>
+                    <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{hr_name}</td>
+                    <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{cooling_end_date}</td>
+                </tr>
+                """
+            else:
+                candidate_rows += f"""
+                <tr>
+                    <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{idx}</td>
+                    <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;"><strong>{candidate_name}</strong></td>
+                    <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{candidate_id}</td>
+                    <td style="padding: 12px; border-bottom: 1px solid #e0e0e0;">{cooling_end_date}</td>
+                </tr>
+                """
+        
+        # Build table headers
+        if is_admin:
+            table_headers = "<th>#</th><th>Candidate Name</th><th>Candidate ID</th><th>HR Name</th><th>Cooling End Date</th>"
+        else:
+            table_headers = "<th>#</th><th>Candidate Name</th><th>Candidate ID</th><th>Cooling End Date</th>"
+        
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Completed Cooling Period Notification</title>
+    <style>
+        body {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }}
+        .container {{
+            max-width: 900px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }}
+        .header {{
+            background: linear-gradient(90deg, #28a745, #20c997);
+            padding: 30px 20px;
+            text-align: center;
+            color: #ffffff;
+        }}
+        .header h1 {{
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }}
+        .content {{
+            padding: 30px 20px;
+            color: #333333;
+        }}
+        .greeting {{
+            font-size: 18px;
+            color: #28a745;
+            margin-bottom: 20px;
+        }}
+        .message {{
+            font-size: 16px;
+            line-height: 1.6;
+            color: #555555;
+            margin-bottom: 25px;
+        }}
+        .candidate-table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }}
+        .candidate-table th {{
+            background-color: #28a745;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }}
+        .candidate-table td {{
+            padding: 12px;
+            border-bottom: 1px solid #e0e0e0;
+        }}
+        .candidate-table tr:hover {{
+            background-color: #f8f9fa;
+        }}
+        .footer {{
+            background-color: #f8f9fa;
+            padding: 20px;
+            text-align: center;
+            font-size: 12px;
+            color: #666666;
+            border-top: 1px solid #e0e0e0;
+        }}
+        .info-box {{
+            background-color: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>✅ Cooling Period Completed</h1>
+            <p style="margin: 5px 0 0 0; font-size: 14px;">High Tech Infosystems</p>
+        </div>
+        <div class="content">
+            <div class="greeting">Dear {recipient_name},</div>
+            <div class="message">
+                The following candidates have completed their cooling period successfully.
+            </div>
+            
+            <div class="info-box">
+                <strong>✓ Total Candidates Completed:</strong> {len(completed_candidates)}
+            </div>
+            
+            <table class="candidate-table">
+                <thead>
+                    <tr>
+                        {table_headers}
+                    </tr>
+                </thead>
+                <tbody>
+                    {candidate_rows}
+                </tbody>
+            </table>
+            
+            <div class="message">
+                These candidates are now released from their cooling period obligations. 
+                Please ensure all related follow-ups are completed.
+            </div>
+        </div>
+        <div class="footer">
+            <p>This is an automated notification from HTI AI Agent System</p>
+            <p>&copy; 2024 High Tech Infosystems. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+        
+        subject = f"Cooling Period Completed - {len(completed_candidates)} Candidate(s)"
+        
+        # Prepare attachments
+        attachments = []
+        if excel_attachment:
+            filename = "Completed_Cooling_Period_Admin.xlsx" if is_admin else "Completed_Cooling_Period.xlsx"
+            attachments.append((filename, excel_attachment, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+        
+        return self._send_email(to_email, subject, html_content, attachments)
 
 
 def send_report_email(subject: str, html_body: str, to_email: str, attachments: Iterable[Attachment] = ()):

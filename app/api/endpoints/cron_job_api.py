@@ -109,6 +109,7 @@ def validate_token(credentials: HTTPAuthorizationCredentials = Depends(security)
         )
 
 
+from datetime import timedelta
 
 
 
@@ -122,6 +123,7 @@ def candidate_metrics(
 
     results = []
     email_payload = []
+    statuses_to_close = []
 
     # Fetch JOINED records only
     joined_rows = (
@@ -172,13 +174,22 @@ def candidate_metrics(
             continue  # ⛔ No cooling required
 
         joined_at = status.joined_at
-        clawback_end_date = joined_at + timedelta(days=int(cooling_days))
+        if not joined_at:
+            logger.warning(f"Skipping candidate_job_id={cj.id} status_id={status.id} because joined_at is missing")
+            continue
+
+        try:
+            clawback_end_date = joined_at + timedelta(days=int(cooling_days))
+        except Exception as e:
+            logger.error(f"Error computing clawback_end_date for candidate_job_id={cj.id}: {e}", exc_info=True)
+            continue
+
         remaining_days = (clawback_end_date - today).days
 
-        # If cooling completed → update DB
+        # If cooling completed → mark for closing (commit after loop)
         if remaining_days <= 0:
             status.cooling_period_closed = today
-            db.commit()
+            statuses_to_close.append(status)
             remaining_days = 0
 
         # ===============================
@@ -207,6 +218,15 @@ def candidate_metrics(
             },
             "candidate": candidate_row
         })
+
+    if statuses_to_close:
+        try:
+            db.commit()
+            logger.info(f"Marked {len(statuses_to_close)} cooling_period_closed statuses")
+        except Exception as e:
+            logger.error(f"Error committing cooling_period_closed updates: {e}", exc_info=True)
+            db.rollback()
+            raise HTTPException(status_code=500, detail="Failed to update cooling status")
 
     return {
         "total_joined_candidates": len(results),
