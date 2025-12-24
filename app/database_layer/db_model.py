@@ -422,10 +422,7 @@ class CandidateJobs(Base):
     logger.info("CandidateJobs model configured successfully")
 
 
-# class CandidateJobStatusType(enum.Enum):
-#     joined = "joined"
-#     rejected = "rejected"
-#     dropped = "dropped"
+
 
 class CandidateJobStatusType(enum.Enum):
     JOINED = "JOINED"
