@@ -6,7 +6,7 @@ JSON/CSV outputs were removed to keep delivery focused on shareable formats.
 from __future__ import annotations
 
 import io
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Mapping, Tuple
 
 import matplotlib.pyplot as plt
@@ -21,6 +21,9 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 from app.core import settings
 import os
+
+# Use a clean, dashboard-like style for charts
+sns.set_theme(style="whitegrid")
 
 def _safe_dataframe(items: List[Mapping]):
     return pd.DataFrame(items or [])
@@ -301,10 +304,10 @@ def _draw_tiles(c: canvas.Canvas, tiles: List[Tuple[str, str]], y_start: float) 
     width, _ = letter
     margin = 40
     cols = 5
-    # Reduce size: larger gap = smaller box
-    gap = 20
+    # Smaller footprint tiles with tighter text fit
+    gap = 18
     box_width = (width - (2 * margin) - ((cols - 1) * gap)) / cols
-    box_height = box_width  # Square
+    box_height = min(box_width * 0.65, 68)  # shorter tiles
     
     x = margin
     y = y_start
@@ -332,30 +335,19 @@ def _draw_tiles(c: canvas.Canvas, tiles: List[Tuple[str, str]], y_start: float) 
         c.setFillColor(colors.white)
         
         # Label (Top Center-ish) - handle long labels
-        c.setFont("Helvetica-Bold", 9)
-        # Truncate or wrap long labels
-        if len(label) > 20:
-            # Split into two lines if too long
-            words = label.split()
-            if len(words) > 2:
-                mid = len(words) // 2
-                line1 = " ".join(words[:mid])
-                line2 = " ".join(words[mid:])
-                c.drawCentredString(x + box_width/2, y - 20, line1)
-                c.drawCentredString(x + box_width/2, y - 32, line2)
-            else:
-                # Just truncate
-                label = label[:17] + "..."
-                c.drawCentredString(x + box_width/2, y - 25, label)
-        else:
-            c.drawCentredString(x + box_width/2, y - 25, label)
+        c.setFont("Helvetica-Bold", 8)
+        # Truncate long labels to stay inside box
+        label_trim = (label[:18] + "...") if len(label) > 21 else label
+        c.drawCentredString(x + box_width/2, y - 18, label_trim)
         
         # Value (Center) - smaller font for Deadline
         if label == "Deadline":
-            c.setFont("Helvetica-Bold", 12)
+            c.setFont("Helvetica-Bold", 11)
         else:
-            c.setFont("Helvetica-Bold", 16)
-        c.drawCentredString(x + box_width/2, y - box_height/2 - 5, str(value))
+            c.setFont("Helvetica-Bold", 14)
+        value_str = str(value)
+        value_trim = (value_str[:12] + "...") if len(value_str) > 15 else value_str
+        c.drawCentredString(x + box_width/2, y - box_height/2 - 2, value_trim)
         
         x += box_width + gap
         
@@ -405,7 +397,7 @@ def _draw_pipeline_funnel_graph(
     
     # Get all data
     all_stages = stage_flow or []
-    total_items = len(all_stages) + 2  # +2 for Joined and Rejected
+    total_items = len(all_stages)
     
     # Calculate max value for Y-axis
     max_value = 0
@@ -437,13 +429,17 @@ def _draw_pipeline_funnel_graph(
         c.setFillColor(colors.black)
         c.drawRightString(x_start - 5, y_grid - 3, str(int(value)))
     
-    # Calculate bar positions - adjust bar width if too many items
-    if total_items > 10:
-        # Reduce bar width and gap if many items
-        bar_width = 20
-        bar_gap = 10
+    # Calculate bar positions - dynamically size to use available width
+    desired_slot = chart_width / max(total_items, 1)
+    bar_width = min(40, max(12, desired_slot * 0.6))
+    bar_gap = min(30, max(6, desired_slot * 0.4))
     total_bar_width = (total_items * bar_width) + ((total_items - 1) * bar_gap)
-    x_offset = (chart_width - total_bar_width) / 2
+    if total_bar_width > chart_width:
+        scale = chart_width / total_bar_width
+        bar_width = max(10, bar_width * scale)
+        bar_gap = max(4, bar_gap * scale)
+        total_bar_width = (total_items * bar_width) + ((total_items - 1) * bar_gap)
+    x_offset = max((chart_width - total_bar_width) / 2, 0)
     
     # Draw bars for stages
     x_current = x_start + x_offset
@@ -479,46 +475,53 @@ def _draw_pipeline_funnel_graph(
         value_y = y_bottom + bar_height + 5
         c.drawCentredString(x_current + bar_width/2, value_y, str(count))
         
-        # Draw label below
-        c.setFont("Helvetica", 8)
+        # Draw label below (rotate if many items)
+        c.setFont("Helvetica", 7)
         c.setFillColor(colors.black)
-        c.drawCentredString(x_current + bar_width/2, y_bottom - 15, stage_name)
+        if total_items > 8:
+            c.saveState()
+            c.translate(x_current + bar_width/2, y_bottom - 18)
+            c.rotate(-45)
+            c.drawString(0, 0, stage_name)
+            c.restoreState()
+        else:
+            c.drawCentredString(x_current + bar_width/2, y_bottom - 12, stage_name)
         
         x_current += bar_width + bar_gap
     
-    # Draw Joined bar (green)
-    joined_bar_height = joined_count * y_scale
-    c.setFillColor(colors.HexColor("#10b981"))  # Green
-    c.rect(x_current, y_bottom, bar_width, joined_bar_height, fill=1, stroke=0)
+    # # Draw Joined bar (green)
+    # joined_bar_height = joined_count * y_scale
+    # c.setFillColor(colors.HexColor("#10b981"))  # Green
+    # c.rect(x_current, y_bottom, bar_width, joined_bar_height, fill=1, stroke=0)
     
-    # Value above Joined bar
-    c.setFont("Helvetica-Bold", 9)
-    c.setFillColor(colors.black)
-    joined_value_y = y_bottom + joined_bar_height + 5
-    c.drawCentredString(x_current + bar_width/2, joined_value_y, str(joined_count))
+    # # Value above Joined bar
+    # c.setFont("Helvetica-Bold", 9)
+    # c.setFillColor(colors.black)
+    # joined_value_y = y_bottom + joined_bar_height + 5
+    # c.drawCentredString(x_current + bar_width/2, joined_value_y, str(joined_count))
     
-    # Label below
-    c.setFont("Helvetica", 8)
-    c.setFillColor(colors.black)
-    c.drawCentredString(x_current + bar_width/2, y_bottom - 15, "Joined")
+    # # Label below
+    # c.setFont("Helvetica", 8)
+    # c.setFillColor(colors.black)
+    # c.drawCentredString(x_current + bar_width/2, y_bottom - 15, "Joined")
     
-    x_current += bar_width + bar_gap
+    # x_current += bar_width + bar_gap
     
-    # Draw Rejected bar (red)
-    rejected_bar_height = rejected_count * y_scale
-    c.setFillColor(colors.HexColor("#ef4444"))  # Red
-    c.rect(x_current, y_bottom, bar_width, rejected_bar_height, fill=1, stroke=0)
+    # # Draw Rejected bar (red)
+    # rejected_bar_height = rejected_count * y_scale
+    # c.setFillColor(colors.HexColor("#ef4444"))  # Red
+    # c.rect(x_current, y_bottom, bar_width, rejected_bar_height, fill=1, stroke=0)
     
-    # Value above Rejected bar
-    c.setFont("Helvetica-Bold", 9)
-    c.setFillColor(colors.black)
-    rejected_value_y = y_bottom + rejected_bar_height + 5
-    c.drawCentredString(x_current + bar_width/2, rejected_value_y, str(rejected_count))
+    # # Value above Rejected bar
+    # c.setFont("Helvetica-Bold", 9)
+    # c.setFillColor(colors.black)
+    # rejected_value_y = y_bottom + rejected_bar_height + 5
+    # c.drawCentredString(x_current + bar_width/2, rejected_value_y, str(rejected_count))
     
-    # Label below
-    c.setFont("Helvetica", 8)
-    c.setFillColor(colors.black)
-    c.drawCentredString(x_current + bar_width/2, y_bottom - 15, "Rejected")
+    # # Label below
+    # c.setFont("Helvetica", 8)
+    # c.setFillColor(colors.black)
+    # c.drawCentredString(x_current + bar_width/2, y_bottom - 15, "Rejected")
     
     # Draw Y-axis line
     c.setStrokeColor(colors.black)
@@ -570,7 +573,7 @@ def _draw_avg_time_line_graph(
         all_values.append(stage.get("avg_days", 0))
     
     # Add Accepted and Rejected
-    all_labels.append("Accepted")
+    all_labels.append("Joined")
     all_values.append(avg_accepted_days)
     all_labels.append("Rejected")
     all_values.append(avg_rejected_days)
@@ -746,6 +749,100 @@ def _draw_velocity_line_graph(
     return y_bottom - 30
 
 
+def _draw_pipeline_flow_graph(
+    c: canvas.Canvas,
+    y_pos: float,
+    joined_data: List[Mapping],
+    rejected_data: List[Mapping],
+    chart_width: float,
+    chart_height: float,
+    x_start: float = 40,
+) -> float:
+    """
+    Draw a dual-line graph for joined vs rejected/drop over time.
+    """
+    y_bottom = y_pos - chart_height
+    y_top = y_pos - 40
+
+    label_set = set()
+    for d in joined_data or []:
+        label_set.add(d.get("label"))
+    for d in rejected_data or []:
+        label_set.add(d.get("label"))
+    labels = sorted(label_set)
+    if not labels:
+        return y_pos
+
+    joined_map = {d.get("label"): d.get("count", 0) for d in (joined_data or [])}
+    rejected_map = {d.get("label"): d.get("count", 0) for d in (rejected_data or [])}
+    joined_vals = [joined_map.get(lbl, 0) for lbl in labels]
+    rejected_vals = [rejected_map.get(lbl, 0) for lbl in labels]
+
+    max_value = max(joined_vals + rejected_vals) if (joined_vals or rejected_vals) else 1
+    max_value = max(max_value, 1)
+
+    y_range = y_top - y_bottom
+    y_scale = y_range / max_value if max_value > 0 else y_range
+
+    num_points = len(labels)
+    x_spacing = chart_width / max(num_points - 1, 1)
+
+    def _build_points(vals):
+        pts = []
+        for i, val in enumerate(vals):
+            x = x_start + (i * x_spacing)
+            y = y_bottom + (val * y_scale)
+            pts.append((x, y, val))
+        return pts
+
+    joined_points = _build_points(joined_vals)
+    rejected_points = _build_points(rejected_vals)
+
+    # Grid
+    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+    c.setLineWidth(0.5)
+    for i in range(6):
+        y_grid = y_bottom + (i * y_range / 5)
+        c.line(x_start, y_grid, x_start + chart_width, y_grid)
+
+    # Joined line (blue)
+    c.setStrokeColor(colors.HexColor("#2563eb"))
+    c.setFillColor(colors.HexColor("#2563eb"))
+    c.setLineWidth(2)
+    for i in range(len(joined_points) - 1):
+        c.line(joined_points[i][0], joined_points[i][1], joined_points[i+1][0], joined_points[i+1][1])
+    for x, y, val in joined_points:
+        c.circle(x, y, 3, fill=1, stroke=0)
+        c.setFont("Helvetica", 7)
+        c.drawString(x - 3, y + 6, str(val))
+
+    # Rejected line (red)
+    c.setStrokeColor(colors.HexColor("#dc2626"))
+    c.setFillColor(colors.HexColor("#dc2626"))
+    c.setLineWidth(2)
+    for i in range(len(rejected_points) - 1):
+        c.line(rejected_points[i][0], rejected_points[i][1], rejected_points[i+1][0], rejected_points[i+1][1])
+    for x, y, val in rejected_points:
+        c.circle(x, y, 3, fill=1, stroke=0)
+        c.setFont("Helvetica", 7)
+        c.drawString(x - 3, y + 6, str(val))
+
+    # X labels
+    c.setFont("Helvetica", 7)
+    c.setFillColor(colors.black)
+    for i, label in enumerate(labels):
+        x = x_start + (i * x_spacing)
+        c.drawCentredString(x, y_bottom - 15, str(label)[:10])
+
+    # Axes
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(1)
+    c.line(x_start, y_bottom, x_start, y_top)
+    c.line(x_start, y_bottom, x_start + chart_width, y_bottom)
+    
+    return y_bottom - 30
+
+
 def _draw_joined_datewise_graph(
     c: canvas.Canvas,
     y_pos: float,
@@ -855,6 +952,83 @@ def _draw_joined_datewise_graph(
     c.line(x_start, y_bottom, x_start + chart_width, y_bottom)
     
     return y_bottom - 40  # Extra space for rotated labels
+
+
+def _draw_recovery_line_graph(
+    c: canvas.Canvas,
+    y_pos: float,
+    data: List[Mapping],
+    chart_width: float,
+    chart_height: float,
+    x_start: float = 40,
+) -> float:
+    """
+    Draw a simple line graph for recovery/pending values.
+    """
+    if not data:
+        return y_pos
+
+    y_bottom = y_pos - chart_height
+    y_top = y_pos - 40
+
+    labels = [str(d.get("label", "")) for d in data]
+    values = [d.get("value", 0) or 0 for d in data]
+
+    num_points = len(values)
+    if num_points == 0:
+        return y_pos
+
+    max_value = max(values) if values else 1
+    max_value = max(max_value, 1)
+
+    y_range = y_top - y_bottom
+    y_scale = y_range / max_value if max_value > 0 else y_range
+
+    # X spacing
+    x_spacing = chart_width / max(num_points - 1, 1)
+    points = []
+    for i, val in enumerate(values):
+        x = x_start + (i * x_spacing)
+        y = y_bottom + (val * y_scale)
+        points.append((x, y))
+
+    # Grid lines
+    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+    c.setLineWidth(0.5)
+    for i in range(6):
+        y_grid = y_bottom + (i * y_range / 5)
+        c.line(x_start, y_grid, x_start + chart_width, y_grid)
+
+    # Draw lines
+    c.setStrokeColor(colors.HexColor("#2563eb"))
+    c.setLineWidth(2)
+    for i in range(len(points) - 1):
+        c.line(points[i][0], points[i][1], points[i+1][0], points[i+1][1])
+
+    # Draw points
+    c.setFillColor(colors.HexColor("#2563eb"))
+    for x, y in points:
+        c.circle(x, y, 3, fill=1, stroke=0)
+
+    # Labels
+    c.setFont("Helvetica", 8)
+    c.setFillColor(colors.black)
+    for i, (x, y) in enumerate(points):
+        c.drawString(x - 4, y + 6, str(values[i]))
+
+    # X labels
+    c.setFont("Helvetica", 7)
+    for i, label in enumerate(labels):
+        x = x_start + (i * x_spacing)
+        c.drawCentredString(x, y_bottom - 15, label[:10])
+
+    # Axes
+    c.setStrokeColor(colors.black)
+    c.setLineWidth(1)
+    c.line(x_start, y_bottom, x_start, y_top)
+    c.line(x_start, y_bottom, x_start + chart_width, y_bottom)
+
+    return y_bottom - 30
 
 
 def _draw_recruiter_bar_graph(
@@ -1062,46 +1236,95 @@ def export_jobs_overview_pdf(
              c.line(40, y + 5, width - 40, y + 5)
              y -= 25
 
-    # Positions at risk section
-    if positions_at_risk:
-        if y < 180:
-            c.showPage()
-            _draw_header_footer(c, title, "System generated report • Jobs overview")
-            y = height - 110
-        c.setFillColor(colors.HexColor("#0f172a"))
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(40, y, "Positions at risk (> threshold days)")
-        y -= 16
-        c.setFont("Helvetica", 9)
-        for row in positions_at_risk[:12]:
-            txt = f"{row.get('job_id')} • {row.get('title')} • {row.get('aging_days')} days open"
-            c.drawString(40, y, txt[:120])
-            y -= 12
+    # Move to a dedicated second page for tabular sections
+    c.showPage()
+    _draw_header_footer(c, title, subtitle)
+    y = height - 110
 
+    # --- Jobs at risk table ---
+    c.setFillColor(colors.HexColor("#0f172a"))
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(40, y, "Jobs at risk (deadline < 5 days)")
+    y -= 18
+
+    headers_risk = ["Job ID", "Job Title", "Company", "Openings", "Closed", "Deadline", "Days"]
+    # Tighter widths to stay within page
+    col_widths_risk = [130, 115, 95, 45, 45, 80, 60]
+    x_start = 40
+
+    c.setFont("Helvetica-Bold", 9)
+    current_x = x_start
+    for i, h in enumerate(headers_risk):
+        c.drawString(current_x, y, h)
+        current_x += col_widths_risk[i]
+
+    y -= 10
     c.setStrokeColor(colors.HexColor("#e2e8f0"))
-    c.line(40, y + 5, width - 40, y + 5)
-    y -= 25
+    c.line(40, y, width - 40, y)
+    y -= 12
+    c.setFont("Helvetica", 9)
 
-    # --- Job Summary Table ---
+    if positions_at_risk:
+        for row in positions_at_risk:
+            if y < 70:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                c.setFont("Helvetica-Bold", 12)
+                c.drawString(40, y, "Jobs at risk (deadline < 5 days)")
+                y -= 18
+                c.setFont("Helvetica-Bold", 9)
+                current_x = x_start
+                for i, h in enumerate(headers_risk):
+                    c.drawString(current_x, y, h)
+                    current_x += col_widths_risk[i]
+                y -= 10
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(40, y, width - 40, y)
+                y -= 12
+                c.setFont("Helvetica", 9)
+
+            deadline = row.get("deadline")
+            deadline_str = deadline.strftime("%Y-%m-%d") if isinstance(deadline, (date, datetime)) else str(deadline or "-")
+            vals = [
+                str(row.get("job_public_id", "")),
+                (str(row.get("title", ""))[:18] + "...") if len(str(row.get("title", ""))) > 20 else str(row.get("title", "")),
+                (str(row.get("company_name", ""))[:15] + "...") if len(str(row.get("company_name", ""))) > 17 else str(row.get("company_name", "")),
+                str(row.get("openings", 0)),
+                str(row.get("joined_count", 0)),
+                deadline_str,
+                str(row.get("days_remaining", "-")),
+            ]
+            current_x = x_start
+            for i, v in enumerate(vals):
+                c.drawString(current_x, y, v)
+                current_x += col_widths_risk[i]
+            y -= 14
+    else:
+        c.drawString(40, y, "No jobs meet the risk criteria.")
+        y -= 14
+
+    y -= 12
+    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+    c.line(40, y, width - 40, y)
+    y -= 22
+
+    # --- Job Summary Table (with status) ---
     if table_rows:
         headers = ["Job ID", "Job Title", "Company Name", "Openings", "Closed", "Total Candidates"]
         
-        # Check space
-        if y < 150:
-             c.showPage()
-             _draw_header_footer(c, title, subtitle)
-             y = height - 110
+        if y < 170:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
              
         c.setFillColor(colors.HexColor("#0f172a"))
         c.setFont("Helvetica-Bold", 12)
         c.drawString(40, y, "Job Summary Table")
-        y -= 20
+        y -= 18
         
-        # Table Header
         c.setFont("Helvetica-Bold", 9)
-        # Adjusted col widths for full Job ID (UUID)
-        # ID(150), Title(120), Company(90), Openings(50), Closed(50), Cand(60) = 520
-        col_widths = [150, 120, 90, 50, 50, 60]
+        col_widths = [140, 120, 110, 55, 55, 80]
         x_start = 40
         
         current_x = x_start
@@ -1112,42 +1335,67 @@ def export_jobs_overview_pdf(
         y -= 10
         c.setStrokeColor(colors.HexColor("#e2e8f0"))
         c.line(40, y, width - 40, y)
-        y -= 15
+        y -= 12
         
         c.setFont("Helvetica", 9)
         
         for row in table_rows:
             if y < 60:
-                 c.showPage()
-                 _draw_header_footer(c, title, subtitle)
-                 y = height - 110
-            
-            # Data Mapping
-            # job_public_id, title, company_name, openings, joined_count (Closed), candidate_count
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                c.setFillColor(colors.HexColor("#0f172a"))
+                c.setFont("Helvetica-Bold", 12)
+                c.drawString(40, y, "Job Summary Table")
+                y -= 18
+                c.setFont("Helvetica-Bold", 9)
+                current_x = x_start
+                for i, h in enumerate(headers):
+                    c.drawString(current_x, y, h)
+                    current_x += col_widths[i]
+                y -= 10
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(40, y, width - 40, y)
+                y -= 12
+                c.setFont("Helvetica", 9)
+
+            # Status dot at row start
+            status_val = str(row.get("status", "")).lower()
+            if status_val in {"active", "open"}:
+                dot_color = colors.HexColor("#16a34a")  # green
+            elif status_val == "inactive":
+                dot_color = colors.HexColor("#eab308")  # yellow
+            elif status_val == "closed":
+                dot_color = colors.HexColor("#dc2626")  # red
+            else:
+                dot_color = colors.HexColor("#94a3b8")  # gray fallback
+            c.setFillColor(dot_color)
+            c.circle(x_start - 10, y + 3, 3, fill=1, stroke=0)
+
             vals = [
-                str(row.get("job_public_id", "")), 
-                str(row.get("title", ""))[:20] + "..." if len(str(row.get("title", ""))) > 20 else str(row.get("title", "")),
-                str(row.get("company_name", ""))[:15] + "..." if len(str(row.get("company_name", ""))) > 15 else str(row.get("company_name", "")),
+                str(row.get("job_public_id", "")),  # no truncation for Job ID
+                (str(row.get("title", ""))[:20] + "...") if len(str(row.get("title", ""))) > 23 else str(row.get("title", "")),
+                (str(row.get("company_name", ""))[:20] + "...") if len(str(row.get("company_name", ""))) > 23 else str(row.get("company_name", "")),
                 str(row.get("openings", 0)),
                 str(row.get("joined_count", 0)),
-                str(row.get("candidate_count", 0))
+                str(row.get("candidate_count", 0)),
             ]
             
             current_x = x_start
             for i, v in enumerate(vals):
                  c.drawString(current_x, y, v)
                  current_x += col_widths[i]
-            y -= 15
             
-        y -= 20
+            y -= 14
+
+        y -= 18
         c.setStrokeColor(colors.HexColor("#000000"))
         c.setLineWidth(1)
         c.line(40, y, width - 40, y)
-        y -= 15
+        y -= 14
         c.setFont("Helvetica-Bold", 10)
         c.drawCentredString(width/2, y, "END OF REPORT")
 
-    c.showPage()
     c.save()
     return buffer.getvalue()
 
@@ -1171,7 +1419,7 @@ def export_job_details_pdf(
     c.setTitle(title)
 
     # IST Conversion
-    utc_now = datetime.utcnow()
+    utc_now = datetime.now(timezone.utc)
     ist_now = utc_now + timedelta(hours=5, minutes=30)
     date_str = ist_now.strftime('%d-%b-%Y %I:%M %p IST')
     
@@ -1305,15 +1553,16 @@ def export_job_details_pdf(
         c.line(margin, y, width - margin, y)
         y -= 30
         
-        # Draw Joined Candidates Datewise graph (full width)
+        # Draw Pipeline Flow graph (Joined vs Rejected)
         joined_datewise_data = extras.get("joined_datewise", []) if extras else []
-        if joined_datewise_data:
+        rejected_datewise_data = extras.get("rejected_datewise", []) if extras else []
+        if joined_datewise_data or rejected_datewise_data:
             c.setFont("Helvetica-Bold", 10)
             c.setFillColor(colors.HexColor("#0f172a"))
-            c.drawString(margin, y, "Total Joined Candidates Datewise")
+            c.drawString(margin, y, "Pipeline Flow (Joined vs Rejected/Drop)")
             y -= 15
             full_chart_width = width - (2 * margin)
-            y = _draw_joined_datewise_graph(c, y, joined_datewise_data, full_chart_width, chart_height, margin)
+            y = _draw_pipeline_flow_graph(c, y, joined_datewise_data, rejected_datewise_data, full_chart_width, chart_height, margin)
             
             # Draw line after graph
             c.setStrokeColor(colors.HexColor("#e2e8f0"))
@@ -1331,20 +1580,41 @@ def export_job_details_pdf(
         
         # Heading
         c.setFillColor(colors.HexColor("#0f172a"))
-        c.setFont("Helvetica-Bold", 16)
+        c.setFont("Helvetica-Bold", 18)
         c.drawString(margin, y, "Recruiter Metrics")
-        y -= 40
+        y -= 48
         
         # Tiles
+        top_name = recruiter_metrics.get("top_recruiter", {}).get("name", "N/A") or "N/A"
+        # Insert line break if long
+        if len(top_name) > 18:
+            split_idx = len(top_name) // 2
+            top_name = top_name[:split_idx] + "\n" + top_name[split_idx:]
         recruiter_tiles = [
             ("Total Recruiter", recruiter_metrics.get("total_recruiters", 0)),
             ("Active Recruiter", recruiter_metrics.get("active_recruiters", 0)),
-            ("Recruiter Closed Maximum Jobs", f"{recruiter_metrics.get('top_recruiter', {}).get('name', 'N/A')} ({recruiter_metrics.get('top_recruiter', {}).get('closed_count', 0)})"),
+            ("Inactive Recruiter", recruiter_metrics.get("inactive_recruiters", 0)),
         ]
         y = _draw_tiles(c, recruiter_tiles, y)
         
-        # Top 10 Recruiters Ranking Table
+        # Best performer block
+        y -= 10
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.setLineWidth(1)
+        c.line(margin, y, width - margin, y)
+        y -= 16
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(margin, y, "Best Performer")
+        y -= 14
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(margin, y, top_name)
+        y -= 18
+        
+        # Top Recruiters Ranking Table
         top_recruiters = recruiter_metrics.get("top_recruiters_ranking", [])
+        recruiter_assignments = recruiter_metrics.get("recruiter_assignments") or []
+        assignment_map = {a.get("recruiter_name"): a for a in recruiter_assignments if a.get("recruiter_name")}
         if top_recruiters:
             y -= 20
             c.setFillColor(colors.HexColor("#0f172a"))
@@ -1357,7 +1627,8 @@ def export_job_details_pdf(
             c.setFont("Helvetica-Bold", 10)
             c.drawString(margin, y, "Rank")
             c.drawString(margin + 60, y, "Recruiter Name")
-            c.drawString(width - 150, y, "No Of Closed")
+            c.drawString(width - 210, y, "Total Candidates")
+            c.drawString(width - 90, y, "No Of Closed")
             y -= 12
             c.setStrokeColor(colors.HexColor("#e2e8f0"))
             c.line(margin, y, width - margin, y)
@@ -1377,13 +1648,76 @@ def export_job_details_pdf(
                 closed = recruiter.get("closed_count", 0)
                 c.drawString(margin, y, str(idx))
                 c.drawString(margin + 60, y, name)
-                c.drawString(width - 150, y, str(closed))
+                # Get total candidates assigned for this recruiter (from recruiter_assignments)
+                total_assigned = assignment_map.get(recruiter.get("recruiter_name")) or {}
+                assigned_val = total_assigned.get("assigned", 0)
+                c.drawString(width - 210, y, str(assigned_val))
+                c.drawString(width - 90, y, str(closed))
                 y -= 15
             
             y -= 10
             c.setStrokeColor(colors.HexColor("#e2e8f0"))
             c.line(margin, y, width - margin, y)
             y -= 20
+        
+        # Recruiter assignment table
+        if recruiter_assignments:
+            if y < 180:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+            c.setFillColor(colors.HexColor("#0f172a"))
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin, y, "Recruiter Assignments")
+            y -= 18
+            c.setFont("Helvetica-Bold", 9)
+            headers = ["Recruiter", "Assigned", "Joined", "Rejected/Dropped"]
+            col_widths = [180, 80, 80, 110]
+            current_x = margin
+            for w, h in zip(col_widths, headers):
+                c.drawString(current_x, y, h)
+                current_x += w
+            y -= 10
+            c.setStrokeColor(colors.HexColor("#e2e8f0"))
+            c.line(margin, y, width - margin, y)
+            y -= 12
+            c.setFont("Helvetica", 9)
+            for row in recruiter_assignments:
+                if y < 70:
+                    c.showPage()
+                    _draw_header_footer(c, title, subtitle)
+                    y = height - 110
+                    c.setFillColor(colors.HexColor("#0f172a"))
+                    c.setFont("Helvetica-Bold", 12)
+                    c.drawString(margin, y, "Recruiter Assignments")
+                    y -= 18
+                    c.setFont("Helvetica-Bold", 9)
+                    current_x = margin
+                    for w, h in zip(col_widths, headers):
+                        c.drawString(current_x, y, h)
+                        current_x += w
+                    y -= 10
+                    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                    c.line(margin, y, width - margin, y)
+                    y -= 12
+                    c.setFont("Helvetica", 9)
+                vals = [
+                    row.get("recruiter_name", "N/A")[:28] + ("..." if len(str(row.get("recruiter_name",""))) > 28 else ""),
+                    str(row.get("assigned", 0)),
+                    str(row.get("joined", 0)),
+                    str(row.get("rejected", 0)),
+                ]
+                current_x = margin
+                for w, v in zip(col_widths, vals):
+                    c.drawString(current_x, y, v)
+                    current_x += w
+                y -= 14
+            y -= 16
+            c.setStrokeColor(colors.HexColor("#e2e8f0"))
+            c.line(margin, y, width - margin, y)
+            y -= 18
+
+        # Clawback total cases graph removed per request
         
         # Candidates Per Recruiter Bar Graph
         candidates_per_recruiter = recruiter_metrics.get("candidates_per_recruiter", [])
@@ -1431,6 +1765,208 @@ def export_job_details_pdf(
             y -= 20
             y = _draw_recruiter_bar_graph(c, y, rejected_dropped, "rejected_count", "Rejected/Dropped", width - (2 * margin), 200, margin)
 
+    # --- Clawback Metrics page ---
+    clawback_metrics = extras.get("clawback_metrics", {}) if extras else {}
+    if clawback_metrics:
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        y = height - 110
+
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.setFont("Helvetica-Bold", 18)
+        c.drawString(margin, y, "Clawback Metrics")
+        y -= 48
+
+        clawback_tiles = [
+            ("Total Clawback Cases", clawback_metrics.get("total_cases", 0)),
+            ("Clawback Completed", clawback_metrics.get("completed", 0)),
+            ("Clawback Dropped", clawback_metrics.get("dropped", 0)),
+            ("Clawback Pending", clawback_metrics.get("pending", 0)),
+        ]
+        y = _draw_tiles(c, clawback_tiles, y)
+
+        # Recovery rate line graph (pending_vs_recovered kept for recovery vs pending/dropped)
+        pending_vs_rec = clawback_metrics.get("pending_vs_recovered", [])
+        if pending_vs_rec:
+            line_data = []
+            for item in pending_vs_rec:
+                label = item.get("label", "")
+                value = item.get("value", 0)
+                line_data.append({"label": label, "value": value})
+            if line_data:
+                if y < 260:
+                    c.showPage()
+                    _draw_header_footer(c, title, subtitle)
+                    y = height - 110
+                c.setFont("Helvetica-Bold", 12)
+                c.setFillColor(colors.HexColor("#0f172a"))
+                c.drawString(margin, y, "Clawback Recovery Rate")
+                y -= 20
+                y = _draw_recovery_line_graph(c, y, line_data, width - (2 * margin), 180, margin)
+                y -= 12
+
+        # Clawback Completed Today table
+        completed_today = clawback_metrics.get("completed_today", [])
+        if completed_today:
+            if y < 180:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+            c.setFillColor(colors.HexColor("#0f172a"))
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin, y, "Clawback Completed Today")
+            y -= 18
+            headers = ["Candidate", "Recruiter", "Joined On", "Completion Date"]
+            col_widths = [150, 150, 100, 110]
+            c.setFont("Helvetica-Bold", 9)
+            current_x = margin
+            for w, h in zip(col_widths, headers):
+                c.drawString(current_x, y, h)
+                current_x += w
+            y -= 10
+            c.setStrokeColor(colors.HexColor("#e2e8f0"))
+            c.line(margin, y, width - margin, y)
+            y -= 12
+            c.setFont("Helvetica", 9)
+            for row in completed_today:
+                if y < 60:
+                    c.showPage()
+                    _draw_header_footer(c, title, subtitle)
+                    y = height - 110
+                    c.setFillColor(colors.HexColor("#0f172a"))
+                    c.setFont("Helvetica-Bold", 12)
+                    c.drawString(margin, y, "Clawback Completed Today")
+                    y -= 18
+                    c.setFont("Helvetica-Bold", 9)
+                    current_x = margin
+                    for w, h in zip(col_widths, headers):
+                        c.drawString(current_x, y, h)
+                        current_x += w
+                    y -= 10
+                    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                    c.line(margin, y, width - margin, y)
+                    y -= 12
+                    c.setFont("Helvetica", 9)
+                vals = [
+                    (row.get("candidate_name") or row.get("candidate_id", "N/A"))[:22],
+                    (row.get("recruiter_name") or "N/A")[:22],
+                    str(row.get("joined_on", "")),
+                    str(row.get("completion_date", "")),
+                ]
+                current_x = margin
+                for w, v in zip(col_widths, vals):
+                    c.drawString(current_x, y, v)
+                    current_x += w
+                y -= 14
+            y -= 14
+
+        # Clawback Drop or Rejected Today
+        drop_today = clawback_metrics.get("drop_today", [])
+        if drop_today:
+            if y < 160:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+            c.setFillColor(colors.HexColor("#0f172a"))
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin, y, "Clawback Drop or Rejected Today")
+            y -= 18
+            headers = ["Candidate", "Status", "Date"]
+            col_widths = [180, 140, 100]
+            c.setFont("Helvetica-Bold", 9)
+            current_x = margin
+            for w, h in zip(col_widths, headers):
+                c.drawString(current_x, y, h)
+                current_x += w
+            y -= 10
+            c.setStrokeColor(colors.HexColor("#e2e8f0"))
+            c.line(margin, y, width - margin, y)
+            y -= 12
+            c.setFont("Helvetica", 9)
+            for row in drop_today:
+                if y < 60:
+                    c.showPage()
+                    _draw_header_footer(c, title, subtitle)
+                    y = height - 110
+                    c.setFillColor(colors.HexColor("#0f172a"))
+                    c.setFont("Helvetica-Bold", 12)
+                    c.drawString(margin, y, "Clawback Drop or Rejected Today")
+                    y -= 18
+                    c.setFont("Helvetica-Bold", 9)
+                    current_x = margin
+                    for w, h in zip(col_widths, headers):
+                        c.drawString(current_x, y, h)
+                        current_x += w
+                    y -= 10
+                    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                    c.line(margin, y, width - margin, y)
+                    y -= 12
+                    c.setFont("Helvetica", 9)
+                vals = [
+                    (row.get("candidate_name") or row.get("candidate_id", "N/A"))[:24],
+                    str(row.get("status", ""))[:18],
+                    str(row.get("date", "")),
+                ]
+                current_x = margin
+                for w, v in zip(col_widths, vals):
+                    c.drawString(current_x, y, v)
+                    current_x += w
+                y -= 14
+
+        # Clawback candidate details table (all cases)
+        clawback_details = clawback_metrics.get("all_cases", [])
+        if clawback_details:
+            if y < 200:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+            c.setFillColor(colors.HexColor("#0f172a"))
+            c.setFont("Helvetica-Bold", 12)
+            c.drawString(margin, y, "Clawback Candidate Details")
+            y -= 18
+            headers = ["Candidate", "Recruiter", "Joined On", "Completion", "Status"]
+            col_widths = [140, 140, 90, 90, 90]
+            c.setFont("Helvetica-Bold", 9)
+            current_x = margin
+            for w, h in zip(col_widths, headers):
+                c.drawString(current_x, y, h)
+                current_x += w
+            y -= 10
+            c.setStrokeColor(colors.HexColor("#e2e8f0"))
+            c.line(margin, y, width - margin, y)
+            y -= 12
+            c.setFont("Helvetica", 9)
+            for row in clawback_details:
+                if y < 60:
+                    c.showPage()
+                    _draw_header_footer(c, title, subtitle)
+                    y = height - 110
+                    c.setFillColor(colors.HexColor("#0f172a"))
+                    c.setFont("Helvetica-Bold", 12)
+                    c.drawString(margin, y, "Clawback Candidate Details")
+                    y -= 18
+                    c.setFont("Helvetica-Bold", 9)
+                    current_x = margin
+                    for w, h in zip(col_widths, headers):
+                        c.drawString(current_x, y, h)
+                        current_x += w
+                    y -= 10
+                    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                    c.line(margin, y, width - margin, y)
+                    y -= 12
+                    c.setFont("Helvetica", 9)
+                vals = [
+                    (row.get("candidate_name") or row.get("candidate_id", "N/A"))[:20],
+                    (row.get("recruiter_name") or "N/A")[:20],
+                    str(row.get("joined_on", "")),
+                    str(row.get("completion_date", "")),
+                    str(row.get("status", ""))[:12],
+                ]
+                current_x = margin
+                for w, v in zip(col_widths, vals):
+                    c.drawString(current_x, y, v)
+                    current_x += w
+                y -= 14
     c.showPage()
     c.save()
     return buffer.getvalue()

@@ -25,6 +25,7 @@ from app.database_layer.db_model import (
 from app.database_layer.db_schema import (
     NotificationUserCreate,
     NotificationUserResponse,
+    NotificationUserRequest,
 )
 from app.services.emailer import EmailService
 from app.celery.tasks.cooling_period_task import send_daily_cooling_period_reminders
@@ -267,7 +268,7 @@ def trigger_daily_cooling_period_reminders(
     status_code=status.HTTP_201_CREATED,
 )
 def add_notification_users(
-    payload: dict,
+    payload: NotificationUserRequest,
     db: Session = Depends(get_db),
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
@@ -282,12 +283,8 @@ def add_notification_users(
     {
         "user_id": [1, 2, 3]  # List of admin/superadmin user IDs to add
     }
-    """
-    # Validate current user is admin or super_admin
-    # if user_data["role"] not in ("Admin", "SuperAdmin"):
-        # raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
-
-    user_ids = payload.get("user_id")
+    """  
+    user_ids = payload.user_id
     if not user_ids or not isinstance(user_ids, list):
         raise HTTPException(status_code=400, detail="user_id must be a list")
 
@@ -304,13 +301,7 @@ def add_notification_users(
             if not user:
                 failed_users.append({"user_id": uid, "error": "User not found"})
                 continue
-            
-            # Validate user is admin or super_admin by checking role relationship
-            # user_role = db.query(Role).filter(Role.id == user.role_id).first()
-
-            # if not user_role or user_role.name not in ("Admin", "SuperAdmin"):
-            #     failed_users.append({"user_id": uid, "error": "User must be admin or super_admin"})
-            #     continue
+         
             
             # Check if notification user already exists
             exists = (
@@ -373,9 +364,6 @@ def delete_notification_user(
     Remove an admin/superadmin user from clawback notification recipients.
     Only admin or super_admin users can trigger this API.
     """
-    # Validate current user is admin or super_admin
-    # if user["role"] not in  ("Admin", "SuperAdmin"):
-    #     raise HTTPException(status_code=403, detail="Access denied: Only admin or super_admin can trigger this API")
 
     notification_user = (
         db.query(NotificationUser)

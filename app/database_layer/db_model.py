@@ -274,7 +274,9 @@ class Company(Base):
     created_by_user = relationship("User", foreign_keys=[created_by])
     updated_by_user = relationship("User", foreign_keys=[updated_by])
     deleted_by_user = relationship("User", foreign_keys=[deleted_by])
-    spocs = relationship("CompanySpoc", back_populates="company")
+
+    # Company SPOCs (one-to-many)
+    spocs = relationship("CompanySpoc", back_populates="company", cascade="all, delete-orphan")
     
     
     
@@ -288,7 +290,6 @@ class TaskLogs(Base):
     status = Column(String(50), nullable=True)
     error = Column(String(250), nullable=True)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    # spocs = relationship("CompanySpoc", back_populates="company")
 
 
 class CompanySpoc(Base):
@@ -384,6 +385,7 @@ class CandidateActivityType(enum.Enum):
     pipeline = "pipeline"
     accepted = "accepted"
     status = "status"
+    rejected = "rejected"
 
 
 class CandidateActivity(Base):
@@ -422,10 +424,7 @@ class CandidateJobs(Base):
     logger.info("CandidateJobs model configured successfully")
 
 
-# class CandidateJobStatusType(enum.Enum):
-#     joined = "joined"
-#     rejected = "rejected"
-#     dropped = "dropped"
+
 
 class CandidateJobStatusType(enum.Enum):
     JOINED = "JOINED"

@@ -1,5 +1,5 @@
 from pydantic import BaseModel,Field
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional,List
 from datetime import datetime
 class JobAgentResponse(BaseModel):
     success: bool = True
@@ -43,3 +43,7 @@ class NotificationUserResponse(NotificationUserBase):
     model_config = {
         "from_attributes": True  # Required for SQLAlchemy ORM
     }
+
+class NotificationUserRequest(BaseModel):
+    user_id: List[int]
+
