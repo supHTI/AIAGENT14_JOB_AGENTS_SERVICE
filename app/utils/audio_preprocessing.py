@@ -44,19 +44,46 @@ class AudioPreprocessor:
         try:
             # Determine format from filename
             file_ext = os.path.splitext(filename)[1].lower().lstrip('.')
-            
-            # Load audio from bytes
-            audio = AudioSegment.from_file(io.BytesIO(audio_content), format=file_ext)
-            
+
+            # First attempt: use pydub (requires ffmpeg/avlib for many formats)
+            try:
+                audio = AudioSegment.from_file(io.BytesIO(audio_content), format=file_ext)
+            except Exception as inner_e:
+                # If ffmpeg is missing, allow WAV fallback using built-in reader
+                is_wav_magic = len(audio_content) >= 12 and audio_content[:4] == b'RIFF' and audio_content[8:12] == b'WAVE'
+                if file_ext in ("wav", "wave") or is_wav_magic:
+                    try:
+                        audio = AudioSegment.from_wav(io.BytesIO(audio_content))
+                        logger.warning(f"Loaded WAV audio using from_wav fallback for {filename} (ffmpeg may be missing)")
+                    except Exception as wav_e:
+                        msg = (
+                            "ffmpeg/avlib not found. On Windows install ffmpeg and add to PATH (e.g., 'choco install ffmpeg'), "
+                            "or set the environment variable 'FFMPEG_PATH' or 'AUDIO_FFMPEG_PATH' to the full path of ffmpeg.exe. "
+                            "As a quick workaround for WAV files, ensure the file is a valid WAV or install ffmpeg."
+                        )
+                        logger.error(f"Failed to load WAV fallback: {str(wav_e)}")
+                        raise RuntimeError(msg)
+                else:
+                    msg = (
+                        "ffmpeg/avlib not found. On Windows install ffmpeg and add to PATH (e.g., 'choco install ffmpeg'), "
+                        "or set the environment variable 'FFMPEG_PATH' or 'AUDIO_FFMPEG_PATH' to the full path of ffmpeg.exe. "
+                        "As a quick workaround for WAV files, ensure the file is a valid WAV or install ffmpeg."
+                    )
+                    logger.error(f"Failed to load audio: {str(inner_e)}")
+                    raise RuntimeError(msg)
+
             logger.info(
                 f"Loaded audio: {filename} - "
                 f"Duration: {len(audio)/1000:.2f}s, "
                 f"Channels: {audio.channels}, "
                 f"Sample Rate: {audio.frame_rate}Hz"
             )
-            
+
             return audio
-            
+
+        except RuntimeError:
+            # Re-raise RuntimeErrors (ffmpeg guidance)
+            raise
         except Exception as e:
             logger.error(f"Failed to load audio: {str(e)}")
             raise

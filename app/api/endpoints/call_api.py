@@ -19,6 +19,8 @@ import json
 from datetime import datetime
 
 from app.cache_db.redis_config import get_redis_client
+from app.database_layer.db_config import SessionLocal
+from app.database_layer.db_model import Candidates, CandidateJobs, User
 
 logger = logging.getLogger("app_logger")
 router = APIRouter(prefix="/api/v1/call", tags=["Call Processing"])
@@ -38,7 +40,7 @@ class CallProcessResult(BaseModel):
     """Response model for call processing result"""
     request_id: str
     status: str
-    candidate_id: Optional[int] = None
+    candidate_id: Optional[str] = None
     job_id: Optional[int] = None
     result: Optional[dict] = None
     error: Optional[str] = None
@@ -56,9 +58,10 @@ def validate_audio_file(filename: str) -> bool:
 @router.post("/process", response_model=CallProcessRequest, status_code=status.HTTP_202_ACCEPTED)
 async def process_call(
     audio_file: UploadFile = File(..., description="Audio file (.wav, .mp3, .m4a)"),
-    candidate_id: int = Form(..., description="Candidate ID"),
+    candidate_id: str = Form(..., description="Candidate ID"),
     job_id: int = Form(..., description="Job ID"),
-    language: Optional[str] = Form("en-IN", description="Language code (default: en-IN)"),
+    call_date: str = Form(..., description="Call date in ISO format (YYYY-MM-DD)"),
+    recording_consent_confirmed: bool = Form(False, description="Recording consent confirmed"),
     diarization: Optional[bool] = Form(True, description="Enable speaker diarization")
 ):
     """
@@ -66,9 +69,10 @@ async def process_call(
     
     **Parameters:**
     - **audio_file**: Audio file in WAV, MP3, or M4A format
-    - **candidate_id**: ID of the candidate being interviewed
-    - **job_id**: ID of the job position
-    - **language**: Language code for transcription (default: en-IN)
+    - **candidate_id**: ID of the candidate (string)
+    - **job_id**: ID of the job position (integer)
+    - **call_date**: Call date in ISO format (YYYY-MM-DD)
+    - **recording_consent_confirmed**: Recording consent status
     - **diarization**: Enable/disable speaker diarization (default: True)
     
     **Returns:**
@@ -76,13 +80,16 @@ async def process_call(
     - **status**: Current status ("processing")
     
     **Processing Flow:**
-    1. Audio format validation
-    2. Audio preprocessing (normalization, noise reduction)
-    3. Speech-to-Text transcription with Google AI
-    4. Transcript normalization and cleaning
-    5. Chunking for LLM analysis
+    1. Validate candidate_id and job_id exist in candidate_jobs table
+    2. Audio format validation
+    3. Audio preprocessing (normalization, noise reduction)
+    4. Speech-to-Text transcription with Google AI
+    5. Transcript normalization and cleaning
+    6. Chunking for LLM analysis
     """
     from app.celery.tasks.call_processing_tasks import process_call_audio_task
+    
+    db = SessionLocal()
     
     try:
         # Validate audio file exists
@@ -106,29 +113,64 @@ async def process_call(
                 detail=f"Unsupported file format. Supported formats: {', '.join(SUPPORTED_FORMATS)}"
             )
         
-        # Validate candidate_id
-        if not isinstance(candidate_id, int) or candidate_id <= 0:
+        # Validate candidate_id (string format)
+        if not isinstance(candidate_id, str) or len(candidate_id.strip()) == 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="candidate_id must be a positive integer"
+                detail="candidate_id must be a non-empty string"
             )
         
-        # Validate job_id
+        # Validate job_id (int)
         if not isinstance(job_id, int) or job_id <= 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="job_id must be a positive integer"
             )
         
-        # Validate language code
-        if language and (not isinstance(language, str) or len(language) < 2):
+        # Validate call_date format
+        try:
+            datetime.fromisoformat(call_date)
+        except (ValueError, TypeError):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid language code"
+                detail="call_date must be in ISO format (YYYY-MM-DD)"
             )
         
-        # Generate unique request ID
-        request_id = str(uuid.uuid4())[:8]
+        # Check if candidate_id and job_id exist in candidate_jobs table
+        candidate_job = db.query(CandidateJobs).filter(
+            CandidateJobs.candidate_id == candidate_id,
+            CandidateJobs.job_id == job_id
+        ).first()
+        
+        if not candidate_job:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Candidate {candidate_id} is not associated with job {job_id}"
+            )
+        
+        # Fetch candidate details
+        candidate = db.query(Candidates).filter(
+            Candidates.candidate_id == candidate_id
+        ).first()
+        
+        if not candidate:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Candidate {candidate_id} not found"
+            )
+        
+        candidate_name = candidate.candidate_name or "Unknown"
+        
+        # Fetch recruiter name from assigned_to user
+        recruiter_name = "Unassigned"
+        if candidate.assigned_to:
+            recruiter = db.query(User).filter(User.id == candidate.assigned_to).first()
+            if recruiter:
+                recruiter_name = recruiter.name or "Unknown"
+        
+        # Generate unique request ID and call_id
+        request_id = str(uuid.uuid4())
+        call_id = str(uuid.uuid4())
         
         # Read and validate audio file size
         audio_content = await audio_file.read()
@@ -150,10 +192,14 @@ async def process_call(
         # Store initial request metadata in Redis
         request_data = {
             "request_id": request_id,
+            "call_id": call_id,
             "status": "processing",
             "candidate_id": candidate_id,
-            "job_id": job_id,
-            "language": language or "en-IN",
+            "candidate_name": candidate_name,
+            "job_id": job_id,  # int
+            "recruiter_name": recruiter_name,
+            "call_date": call_date,
+            "recording_consent_confirmed": recording_consent_confirmed,
             "diarization": diarization if diarization is not None else True,
             "filename": audio_file.filename,
             "file_size": len(audio_content),
@@ -170,16 +216,21 @@ async def process_call(
         # Queue the audio processing task
         task = process_call_audio_task.delay(
             request_id=request_id,
+            call_id=call_id,
             audio_content=audio_content.hex(),  # Convert bytes to hex string
             filename=audio_file.filename,
             candidate_id=candidate_id,
-            job_id=job_id,
-            language=language or "en-IN",
+            candidate_name=candidate_name,
+            job_id=job_id,  # int
+            recruiter_name=recruiter_name,
+            call_date=call_date,
+            call_duration_seconds=None,  # Will be calculated during processing
+            recording_consent_confirmed=recording_consent_confirmed,
             diarization=diarization if diarization is not None else True
         )
         
         logger.info(
-            f"Call processing queued - Request ID: {request_id}, "
+            f"Call processing queued - Request ID: {request_id}, Call ID: {call_id}, "
             f"Candidate: {candidate_id}, Job: {job_id}, Task: {task.id}, "
             f"File size: {len(audio_content) / (1024*1024):.2f}MB"
         )
@@ -197,6 +248,8 @@ async def process_call(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process audio file: {str(e)}"
         )
+    finally:
+        db.close()
 
 
 @router.get("/result/{request_id}", response_model=CallProcessResult)

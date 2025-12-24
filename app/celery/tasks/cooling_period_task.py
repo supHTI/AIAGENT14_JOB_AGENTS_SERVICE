@@ -437,10 +437,12 @@ def send_daily_cooling_period_reminders(self):
             remaining_days = (clawback_end - today).days
 
             # 5️⃣ auto-close
-            if remaining_days <= 0:
+            if remaining_days < 0:
                 status.cooling_period_closed = today
                 statuses_to_close.append(status)
                 remaining_days = 0
+            if remaining_days == 0:
+                today_completed = True
 
             hr_candidates[candidate.assigned_to].append({
                 "candidate_id": candidate.candidate_id,

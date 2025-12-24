@@ -10,7 +10,7 @@ from typing import List, Dict
 import io
 import re
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-from google.genai.errors import ServerError
+from google.genai.errors import ServerError, ClientError
 
 logger = logging.getLogger("app_logger")
 
@@ -19,16 +19,25 @@ class GoogleSTT:
     """Gemini Audio transcription service"""
     
     def __init__(self):
-        """Initialize Gemini client"""
+        """Initialize Gemini client using GOOGLE_API_KEY or GEMINI_API_KEY"""
         try:
-            api_key = os.getenv("GEMINI_API_KEY")
-            if not api_key:
-                raise RuntimeError("GEMINI_API_KEY not set in environment")
-            
+            # Prefer GOOGLE_API_KEY if present (google.genai client may also look for it)
+            api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+            used_key = "GOOGLE_API_KEY" if os.getenv("GOOGLE_API_KEY") else ("GEMINI_API_KEY" if os.getenv("GEMINI_API_KEY") else None)
+
+            if not api_key or not used_key:
+                raise RuntimeError(
+                    "No API key found. Set either GOOGLE_API_KEY or GEMINI_API_KEY in the environment for Gemini transcription."
+                )
+
+            # Masked logging to avoid leaking secret
+            masked = (api_key[:4] + "****") if len(api_key) > 4 else "****"
+            logger.info(f"Using {used_key} for Gemini client (masked={masked})")
+
             self.client = gg.Client(api_key=api_key)
             self.model = "gemini-2.5-flash"
             logger.info(f"Initialized Gemini STT with model: {self.model}")
-                
+
         except Exception as e:
             logger.error(f"Failed to initialize Gemini client: {str(e)}")
             raise
@@ -81,11 +90,20 @@ class GoogleSTT:
             
             # Call Gemini API with retry logic
             logger.info("Sending audio to Gemini API...")
-            response = self._retryable_generate_content(
-                model=self.model,
-                contents=contents,
-                config=gen_cfg
-            )
+            try:
+                response = self._retryable_generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=gen_cfg
+                )
+            except ClientError as ce:
+                # ClientError often indicates invalid or missing API key
+                logger.error(f"Gemini API client error: {str(ce)}")
+                raise RuntimeError(
+                    "Gemini transcription failed due to API key/authentication error. "
+                    "Ensure GOOGLE_API_KEY or GEMINI_API_KEY is set and valid in the worker environment. "
+                    "Original error: " + str(ce)
+                ) from ce
             
             # Extract text from response
             transcript_text = getattr(response, "text", "").strip()
@@ -202,11 +220,19 @@ class GoogleSTT:
                 
                 # Transcribe chunk with retry logic
                 logger.info(f"Sending chunk {chunk_num} to Gemini API...")
-                response = self._retryable_generate_content(
-                    model=self.model,
-                    contents=contents,
-                    config=gen_cfg
-                )
+                try:
+                    response = self._retryable_generate_content(
+                        model=self.model,
+                        contents=contents,
+                        config=gen_cfg
+                    )
+                except ClientError as ce:
+                    logger.error(f"Gemini API client error on chunk {chunk_num}: {str(ce)}")
+                    raise RuntimeError(
+                        "Gemini transcription failed due to API key/authentication error while processing a chunk. "
+                        "Ensure GOOGLE_API_KEY or GEMINI_API_KEY is set and valid in the worker environment. "
+                        "Original error: " + str(ce)
+                    ) from ce
                 
                 # Extract text
                 transcript_text = getattr(response, "text", "").strip()

@@ -14,6 +14,14 @@ from app.cache_db.redis_config import get_redis_url
 import logging
 from celery.schedules import crontab
 
+# Optionally load environment variables from a .env file so workers pick up API keys
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    logging.getLogger("app_logger").info("Loaded .env into environment for Celery workers")
+except Exception:
+    logging.getLogger("app_logger").info("python-dotenv not installed; skipping .env load")
+
 logger = logging.getLogger("app_logger")
 
 # Get Redis URL

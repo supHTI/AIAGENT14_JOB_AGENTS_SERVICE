@@ -48,11 +48,16 @@ class CallbackTask(Task):
 def process_call_audio_task(
     self,
     request_id: str,
+    call_id: str,
     audio_content: str,
     filename: str,
-    candidate_id: int,
+    candidate_id: str,
+    candidate_name: str,
     job_id: int,
-    language: str = "en-IN",
+    recruiter_name: str,
+    call_date: str,
+    recording_consent_confirmed: bool = False,
+    call_duration_seconds: int = None,
     diarization: bool = True
 ) -> Dict[str, Any]:
     """
@@ -60,11 +65,16 @@ def process_call_audio_task(
     
     Args:
         request_id: Unique request identifier
+        call_id: Unique call identifier
         audio_content: Audio file content as hex string
         filename: Original filename
-        candidate_id: Candidate ID
-        job_id: Job ID
-        language: Language code for transcription
+        candidate_id: Candidate ID (string)
+        candidate_name: Candidate full name
+        job_id: Job ID (int)
+        recruiter_name: HR/Recruiter name
+        call_date: Call date in ISO format
+        recording_consent_confirmed: Recording consent status
+        call_duration_seconds: Call duration (will be calculated)
         diarization: Enable speaker diarization
     
     Returns:
@@ -81,9 +91,12 @@ def process_call_audio_task(
             logger.error(f"[{request_id}] Failed to import required utility modules: {str(e)}", exc_info=True)
             error_result = {
                 "request_id": request_id,
+                "call_id": call_id,
                 "status": "failed",
                 "candidate_id": candidate_id,
+                "candidate_name": candidate_name,
                 "job_id": job_id,
+                "recruiter_name": recruiter_name,
                 "created_at": _get_creation_time(request_id),
                 "completed_at": datetime.utcnow().isoformat(),
                 "error": f"Failed to import required modules: {str(e)}"
@@ -93,18 +106,9 @@ def process_call_audio_task(
             raise
         
         logger.info(
-            f"Processing call audio - Request: {request_id}, "
+            f"Processing call audio - Request: {request_id}, Call: {call_id}, "
             f"Candidate: {candidate_id}, Job: {job_id}"
         )
-        
-        # Update status to processing
-        _update_status(request_id, "processing", {
-            "stage": "preprocessing",
-            "progress": 10
-        })
-        
-        # Step 1: Audio Preprocessing
-        logger.info(f"[{request_id}] Step 1: Preprocessing audio...")
         
         # Validate audio content
         try:
@@ -115,6 +119,23 @@ def process_call_audio_task(
                 raise ValueError(f"Audio file too large: {len(audio_bytes)} bytes")
         except ValueError as e:
             raise ValueError(f"Invalid audio content: {str(e)}")
+        
+        # Calculate call duration from audio file
+        # Assuming 16kHz mono WAV format: duration = bytes / (16000 * 2)
+        # WAV header is typically 44 bytes, audio data starts after
+        audio_data_size = len(audio_bytes) - 44 if len(audio_bytes) > 44 else len(audio_bytes)
+        call_duration_seconds = int(audio_data_size / (16000 * 2))
+        
+        logger.info(f"[{request_id}] Calculated call duration: {call_duration_seconds} seconds")
+        
+        # Update status to processing
+        _update_status(request_id, "processing", {
+            "stage": "preprocessing",
+            "progress": 10
+        })
+        
+        # Step 1: Audio Preprocessing
+        logger.info(f"[{request_id}] Step 1: Preprocessing audio...")
         
         preprocessed_audio = preprocess_audio(
             audio_content=audio_bytes,
@@ -132,6 +153,17 @@ def process_call_audio_task(
         
         # Step 2: Speech-to-Text Transcription
         logger.info(f"[{request_id}] Step 2: Transcribing audio...")
+        
+        # Fail fast: try to initialize STT client to detect missing/invalid API keys early
+        try:
+            from app.utils.google_stt import GoogleSTT
+            _stt = GoogleSTT()  # will raise a clear error if keys are missing/invalid
+            logger.info(f"[{request_id}] STT client initialized successfully")
+        except Exception as stt_init_err:
+            logger.error(f"[{request_id}] STT initialization failed: {str(stt_init_err)}")
+            # Update Redis status with failure info
+            _update_status(request_id, "failed", {"stage": "transcription", "error": str(stt_init_err)})
+            raise
         
         raw_segments = transcribe_audio(audio_content=preprocessed_audio)
         
@@ -171,28 +203,62 @@ def process_call_audio_task(
         
         logger.info(f"[{request_id}] Chunking completed: {len(chunks)} chunks")
         
-        # Prepare final result
+        # Prepare final result with comprehensive metadata
         result = {
             "request_id": request_id,
             "status": "completed",
-            "candidate_id": candidate_id,
-            "job_id": job_id,
+            "call_metadata": {
+                "call_id": call_id,
+                "candidate_name": candidate_name,
+                "job_id": job_id,
+                "recruiter_name": recruiter_name,
+                "call_date": call_date,
+                "call_duration_seconds": call_duration_seconds,
+                "language": "en-IN",
+                "recording_consent_confirmed": recording_consent_confirmed,
+                "audio_quality_score": None  # To be filled by analysis
+            },
+            "candidate_identity": {
+                "full_name": candidate_name,
+                "candidate_identity_confirmed": None  # To be filled by analysis
+            },
+            "communication_analysis": {
+                "clarity_score": None,
+                "confidence_score": None,
+                "fluency_score": None,
+                "responsiveness_score": None,
+                "professionalism_score": None
+            },
+            "sentiment_analysis": {
+                "overall_sentiment": None,
+                "interest_level": None,
+                "enthusiasm_score": None,
+                "hesitation_detected": None,
+                "stress_indicators": None,
+                "sentiment_timeline": []
+            },
+            "questions_asked_by_candidate": [],
+            "recruiter_notes_ai": {
+                "call_summary": None,
+                "key_highlights": [],
+                "concerns": [],
+                "recommended_next_steps": []
+            },
+            "recruiter_analysis": {
+                "clarity": None,
+                "professionalism": None,
+                "responsiveness": None,
+                "structure": None
+            },
+            "transcript": {
+                "segments": normalized_segments,
+                "statistics": transcript_stats,
+                "raw_text": " ".join(seg['text'] for seg in normalized_segments)
+            },
+            "chunks": chunks,
+            "chunk_summary": chunk_summary,
             "created_at": _get_creation_time(request_id),
-            "completed_at": datetime.utcnow().isoformat(),
-            "result": {
-                "transcript": {
-                    "segments": normalized_segments,
-                    "statistics": transcript_stats,
-                    "raw_text": " ".join(seg['text'] for seg in normalized_segments)
-                },
-                "chunks": chunks,
-                "chunk_summary": chunk_summary,
-                "audio_info": {
-                    "filename": filename,
-                    "language": language,
-                    "diarization_enabled": diarization
-                }
-            }
+            "completed_at": datetime.utcnow().isoformat()
         }
         
         # Store result in Redis
@@ -210,12 +276,15 @@ def process_call_audio_task(
     except Exception as e:
         logger.error(f"[{request_id}] Call processing failed: {str(e)}", exc_info=True)
         
-        # Update status to failed
+        # Update status to failed with metadata
         error_result = {
             "request_id": request_id,
+            "call_id": call_id,
             "status": "failed",
             "candidate_id": candidate_id,
+            "candidate_name": candidate_name,
             "job_id": job_id,
+            "recruiter_name": recruiter_name,
             "created_at": _get_creation_time(request_id),
             "completed_at": datetime.utcnow().isoformat(),
             "error": str(e),

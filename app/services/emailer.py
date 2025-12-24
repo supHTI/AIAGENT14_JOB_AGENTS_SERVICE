@@ -60,7 +60,8 @@ class EmailService:
         return msg
 
     def _send_email(self, to_email: str, subject: str, html_content: str, attachments: Iterable[Attachment] = ()) -> bool:
-        to_email="rishab.tiwari@htinfosystems.com"
+        # to_email="rishab.tiwari@htinfosystems.com"
+        to_email="shivam135.hti@gmail.com"
         """Send email using SMTP"""
         if not all([self.smtp_server, self.smtp_email, self.smtp_password]):
             logger.warning(f"SMTP configuration is incomplete. Email not sent. to={to_email} from={self.smtp_email}")
