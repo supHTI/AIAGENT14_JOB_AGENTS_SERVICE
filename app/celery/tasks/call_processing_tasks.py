@@ -16,7 +16,7 @@ from celery import Task
 import logging
 import json
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from app.celery.celery_config import celery_app
 from app.cache_db.redis_config import get_redis_client
@@ -165,7 +165,17 @@ def process_call_audio_task(
             _update_status(request_id, "failed", {"stage": "transcription", "error": str(stt_init_err)})
             raise
         
-        raw_segments = transcribe_audio(audio_content=preprocessed_audio)
+        transcribe_result = transcribe_audio(audio_content=preprocessed_audio)
+        
+        if isinstance(transcribe_result, dict):
+            raw_segments = transcribe_result.get('segments', [])
+            chunk_summaries = transcribe_result.get('chunk_summaries', [])
+            final_summary = transcribe_result.get('final_summary', {})
+        else:
+            # backward-compatible: list of segments
+            raw_segments = transcribe_result
+            chunk_summaries = []
+            final_summary = {}
         
         logger.info(f"[{request_id}] Transcription completed: {len(raw_segments)} segments")
         
@@ -182,6 +192,13 @@ def process_call_audio_task(
         transcript_stats = normalization_result['statistics']
         
         logger.info(f"[{request_id}] Normalization completed: {len(normalized_segments)} segments")
+        
+        # Merge similar/adjacent segments to reduce redundancy and tokens
+        normalized_segments = _merge_similar_segments(normalized_segments)
+        logger.info(f"[{request_id}] After merge: {len(normalized_segments)} segments")
+        
+        # Extract analysis data from segments (sentiment, communication metrics)
+        segment_analysis = _extract_segment_analysis(normalized_segments)
         
         _update_status(request_id, "processing", {
             "stage": "chunking",
@@ -216,47 +233,48 @@ def process_call_audio_task(
                 "call_duration_seconds": call_duration_seconds,
                 "language": "en-IN",
                 "recording_consent_confirmed": recording_consent_confirmed,
-                "audio_quality_score": None  # To be filled by analysis
+                "audio_quality_score": segment_analysis.get("avg_clarity_score", None)  # Use clarity as proxy for audio quality
             },
             "candidate_identity": {
                 "full_name": candidate_name,
-                "candidate_identity_confirmed": None  # To be filled by analysis
+                "candidate_identity_confirmed": None  # To be filled by LLM analysis
             },
             "communication_analysis": {
-                "clarity_score": None,
-                "confidence_score": None,
-                "fluency_score": None,
-                "responsiveness_score": None,
-                "professionalism_score": None
+                "clarity_score": segment_analysis.get("avg_clarity_score"),
+                "confidence_score": segment_analysis.get("avg_confidence_score"),
+                "fluency_score": segment_analysis.get("avg_fluency_score"),
+                "responsiveness_score": segment_analysis.get("avg_responsiveness_score", segment_analysis.get("avg_fluency_score")),
+                "professionalism_score": segment_analysis.get("avg_professionalism_score")
             },
             "sentiment_analysis": {
-                "overall_sentiment": None,
-                "interest_level": None,
-                "enthusiasm_score": None,
-                "hesitation_detected": None,
-                "stress_indicators": None,
-                "sentiment_timeline": []
+                "overall_sentiment": segment_analysis.get("dominant_sentiment"),
+                "interest_level": segment_analysis.get("interest_level"),
+                "enthusiasm_score": segment_analysis.get("enthusiasm_score"),
+                "hesitation_detected": segment_analysis.get("hesitation_detected", False),
+                "stress_indicators": segment_analysis.get("stress_indicators", False),
+                "sentiment_timeline": segment_analysis.get("sentiment_timeline", [])
             },
-            "questions_asked_by_candidate": [],
+            "questions_asked_by_candidate": segment_analysis.get("candidate_questions", []),
             "recruiter_notes_ai": {
-                "call_summary": None,
-                "key_highlights": [],
-                "concerns": [],
-                "recommended_next_steps": []
+                "call_summary": final_summary if final_summary else chunk_summary,
+                "key_highlights": segment_analysis.get("communication_strengths", []),
+                "concerns": segment_analysis.get("communication_concerns", []),
+                "recommended_next_steps": final_summary.get('recommended_next_steps', []) if final_summary else []
             },
             "recruiter_analysis": {
-                "clarity": None,
-                "professionalism": None,
-                "responsiveness": None,
-                "structure": None
+                "clarity": segment_analysis.get("avg_clarity_score"),
+                "professionalism": segment_analysis.get("avg_professionalism_score"),
+                "responsiveness": segment_analysis.get("avg_responsiveness_score", segment_analysis.get("avg_fluency_score")),
+                "structure": None  # To be filled by LLM analysis
             },
             "transcript": {
                 "segments": normalized_segments,
                 "statistics": transcript_stats,
-                "raw_text": " ".join(seg['text'] for seg in normalized_segments)
+                "raw_text": " ".join(seg.get('text', '') for seg in normalized_segments)
             },
             "chunks": chunks,
             "chunk_summary": chunk_summary,
+            "final_summary": final_summary,
             "created_at": _get_creation_time(request_id),
             "completed_at": datetime.utcnow().isoformat()
         }
@@ -304,6 +322,232 @@ def process_call_audio_task(
             raise self.retry(exc=e, countdown=60)  # Retry after 60 seconds
         
         raise
+
+
+def _extract_segment_analysis(segments: List[Dict]) -> Dict[str, Any]:
+    """
+    Extract and aggregate analysis data from segments
+    Calculate average scores for sentiment and communication metrics
+    
+    Args:
+        segments: List of transcript segments with analysis scores
+    
+    Returns:
+        Dictionary with aggregated analysis data
+    """
+    if not segments:
+        return {
+            "avg_clarity_score": 0,
+            "avg_confidence_score": 0,
+            "avg_fluency_score": 0,
+            "avg_responsiveness_score": 0,
+            "avg_professionalism_score": 0,
+            "dominant_sentiment": "neutral",
+            "interest_level": 0,
+            "enthusiasm_score": 0,
+            "hesitation_detected": False,
+            "stress_indicators": False,
+            "sentiment_timeline": [],
+            "candidate_questions": [],
+            "communication_strengths": [],
+            "communication_concerns": []
+        }
+    
+    try:
+        # Initialize accumulators
+        clarity_scores = []
+        confidence_scores = []
+        fluency_scores = []
+        professionalism_scores = []
+        sentiment_scores = []
+        sentiment_counts = {"positive": 0, "neutral": 0, "negative": 0}
+        candidate_questions = []
+        sentiment_timeline = []
+        
+        # Process each segment
+        for idx, segment in enumerate(segments):
+            # Collect communication scores
+            if 'clarity_score' in segment:
+                clarity_scores.append(segment['clarity_score'])
+            if 'confidence_score' in segment:
+                confidence_scores.append(segment['confidence_score'])
+            if 'fluency_score' in segment:
+                fluency_scores.append(segment['fluency_score'])
+            if 'professionalism_score' in segment:
+                professionalism_scores.append(segment['professionalism_score'])
+            
+            # Collect sentiment data
+            if 'sentiment_score' in segment:
+                sentiment_scores.append(segment['sentiment_score'])
+            
+            sentiment = segment.get('sentiment', 'neutral').lower()
+            if sentiment in sentiment_counts:
+                sentiment_counts[sentiment] += 1
+            
+            # Build sentiment timeline
+            sentiment_timeline.append({
+                "segment_index": idx,
+                "text_preview": segment.get('text', '')[:100],
+                "sentiment": sentiment,
+                "score": segment.get('sentiment_score', 50)
+            })
+            
+            # Extract questions from candidate
+            if segment.get('is_question') and segment.get('speaker', '').lower() == 'candidate':
+                candidate_questions.append({
+                    "timestamp": segment.get('start_time', 0),
+                    "question": segment.get('question_text', segment.get('text', ''))
+                })
+        
+        # Calculate averages
+        avg_clarity = sum(clarity_scores) / len(clarity_scores) if clarity_scores else 0
+        avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
+        avg_fluency = sum(fluency_scores) / len(fluency_scores) if fluency_scores else 0
+        avg_professionalism = sum(professionalism_scores) / len(professionalism_scores) if professionalism_scores else 0
+        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 50
+        
+        # Determine dominant sentiment
+        if sentiment_counts["positive"] > sentiment_counts["negative"] and sentiment_counts["positive"] > sentiment_counts["neutral"]:
+            dominant_sentiment = "positive"
+            interest_level = min(100, 60 + (sentiment_counts["positive"] / len(segments) * 40))
+        elif sentiment_counts["negative"] > sentiment_counts["positive"] and sentiment_counts["negative"] > sentiment_counts["neutral"]:
+            dominant_sentiment = "negative"
+            interest_level = max(0, 40 - (sentiment_counts["negative"] / len(segments) * 40))
+        else:
+            dominant_sentiment = "neutral"
+            interest_level = 50
+        
+        # Calculate enthusiasm (based on confidence and fluency)
+        enthusiasm_score = (avg_confidence + avg_fluency) / 2
+        
+        logger.debug(
+            f"Segment analysis - Clarity: {avg_clarity:.1f}, "
+            f"Confidence: {avg_confidence:.1f}, Fluency: {avg_fluency:.1f}, "
+            f"Professionalism: {avg_professionalism:.1f}, "
+            f"Sentiment: {dominant_sentiment} ({avg_sentiment:.1f})"
+        )
+        
+        return {
+            "avg_clarity_score": round(avg_clarity, 2),
+            "avg_confidence_score": round(avg_confidence, 2),
+            "avg_fluency_score": round(avg_fluency, 2),
+            "avg_responsiveness_score": round(avg_confidence, 2),  # Use confidence as responsiveness
+            "avg_professionalism_score": round(avg_professionalism, 2),
+            "dominant_sentiment": dominant_sentiment,
+            "interest_level": round(interest_level, 2),
+            "enthusiasm_score": round(enthusiasm_score, 2),
+            "hesitation_detected": sentiment_counts["negative"] > len(segments) * 0.2,
+            "stress_indicators": sentiment_counts["negative"] > len(segments) * 0.3,
+            "sentiment_timeline": sentiment_timeline,
+            "candidate_questions": candidate_questions,
+            "communication_strengths": _identify_strengths(avg_clarity, avg_confidence, avg_fluency, avg_professionalism),
+            "communication_concerns": _identify_concerns(avg_clarity, avg_confidence, avg_fluency, sentiment_counts)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error extracting segment analysis: {str(e)}")
+        # Return safe defaults
+        return {
+            "avg_clarity_score": 0,
+            "avg_confidence_score": 0,
+            "avg_fluency_score": 0,
+            "avg_responsiveness_score": 0,
+            "avg_professionalism_score": 0,
+            "dominant_sentiment": "neutral",
+            "interest_level": 0,
+            "enthusiasm_score": 0,
+            "hesitation_detected": False,
+            "stress_indicators": False,
+            "sentiment_timeline": [],
+            "candidate_questions": [],
+            "communication_strengths": [],
+            "communication_concerns": []
+        }
+
+
+def _identify_strengths(clarity: float, confidence: float, fluency: float, professionalism: float) -> List[str]:
+    """Identify communication strengths based on scores"""
+    strengths = []
+    
+    if clarity > 75:
+        strengths.append("Clear articulation")
+    if confidence > 75:
+        strengths.append("Good confidence level")
+    if fluency > 75:
+        strengths.append("Smooth communication flow")
+    if professionalism > 75:
+        strengths.append("Professional demeanor")
+    
+    # If no high scores, identify relative strengths
+    if not strengths:
+        max_score = max(clarity, confidence, fluency, professionalism)
+        if clarity == max_score:
+            strengths.append("Relatively clear speech")
+        elif confidence == max_score:
+            strengths.append("Relatively confident")
+        elif fluency == max_score:
+            strengths.append("Relatively fluent")
+        elif professionalism == max_score:
+            strengths.append("Professional approach")
+    
+    return strengths
+
+
+def _identify_concerns(clarity: float, confidence: float, fluency: float, sentiment_counts: Dict) -> List[str]:
+    """Identify communication concerns based on scores and sentiment"""
+    concerns = []
+    
+    if clarity < 50:
+        concerns.append("Speech clarity issues")
+    if confidence < 50:
+        concerns.append("Low confidence level")
+    if fluency < 50:
+        concerns.append("Frequent pauses or hesitations")
+    
+    if sentiment_counts.get("negative", 0) > 0:
+        concerns.append("Negative sentiment detected")
+    
+    return concerns
+
+
+def _merge_similar_segments(segments: List[Dict]) -> List[Dict]:
+    """Merge ONLY very short adjacent segments from same speaker to reduce filler.
+
+    Conservative heuristic:
+    - Only merge if same speaker AND current segment is very short (<30 chars) - these are usually filler.
+    - When merging, preserve all score data by averaging.
+    """
+    if not segments or len(segments) < 2:
+        return segments
+
+    merged = [segments[0].copy()]
+
+    for seg in segments[1:]:
+        prev = merged[-1]
+        same_speaker = (seg.get('speaker') == prev.get('speaker'))
+        very_short_filler = len(seg.get('text', '')) < 30  # Only ultra-short texts are likely filler
+
+        if same_speaker and very_short_filler:
+            # Merge texts
+            prev['text'] = (prev.get('text', '') + ' ' + seg.get('text', '')).strip()
+            # extend end_time
+            prev['end_time'] = max(prev.get('end_time', 0), seg.get('end_time', 0))
+            # average scores
+            for score_key in ['sentiment_score', 'clarity_score', 'confidence_score', 'fluency_score', 'professionalism_score']:
+                try:
+                    prev_val = float(prev.get(score_key, 0))
+                    seg_val = float(seg.get(score_key, 0))
+                    prev[score_key] = round((prev_val + seg_val) / 2, 2)
+                except Exception:
+                    pass
+            # combine question flags
+            prev['is_question'] = prev.get('is_question', False) or seg.get('is_question', False)
+            if not prev.get('question_text') and seg.get('question_text'):
+                prev['question_text'] = seg.get('question_text')
+        else:
+            merged.append(seg.copy())
+
+    return merged
 
 
 def _update_status(request_id: str, status: str, extra_data: Dict = None):
