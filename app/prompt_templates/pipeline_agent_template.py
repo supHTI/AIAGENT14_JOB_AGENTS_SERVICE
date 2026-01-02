@@ -97,88 +97,101 @@ class PipelineAgentPrompt:
         return PromptTemplate(
             input_variables=["jd_text"],
             template="""
-You are an expert in Job hiring workflows and ATS pipeline design.
+                    You are an expert in Job hiring workflows and ATS pipeline design from either Job Description or Email Text.
 
-Job Description:
-{jd_text}
+                    Job Description or Email Text:
+                    {jd_text}
 
-Task:
-Extract pipeline and interview process information.
+                    A Pipeline is a sequence of stages that a candidate goes through during the hiring process.
+                    A Stage is a part of a pipeline that a candidate goes through during the hiring process.
+                    A Status is a part of a stage that a candidate goes through during the hiring process.
+                    
+                    Source of Information:
+                    The Job Description or Email Text may contain a details of the hiring process,
+                    If it contains the pipeline steps or stages, consider them exactly do not add any extra steps or stages.
+                    If not then create the pipeline steps or stages based on the Job Description or Email Text.
 
-Rules:
-1. If pipeline name, interview stages, remarks, or colors are explicitly mentioned:
-   - Extract them exactly.
+                    Task:
+                    1. Your task is to generate the pipeline and interview process information from the Job Description or Email Text.
+                    
 
-2. If any information is missing:
-   - Auto-create it using ATS best practices.
+                    Pipeline Guidelines:
+                    - pipeline_name: A pipeline name basically happens by the job title, or something similar to that.
+                    - remarks: The remarks of the pipeline, it can be a short description of the pipeline.
 
-Pipeline Guidelines:
-- pipeline_name: infer from the job title if not explicitly mentioned.
+                    Interview Stage Rules:
+                    - interview_stages MUST be ordered
+                    - Each stage MUST contain statuses
+                    - Each stage MUST contain a color_code
 
-Interview Stage Rules:
-- interview_stages MUST be ordered
-- Each stage MUST contain statuses
-- Each stage MUST contain a color_code
+                    Status Rules (IMPORTANT):
+                    - Statuses MUST be decided dynamically based on:
+                      - Job role
+                      - Stage purpose
+                      - Seniority level
+                    - Status flows MUST be realistic for ATS workflows
+                    - Each status MUST contain:
+                      - status_name
+                      - description
+                      - color_code
+                      - tag
 
-Status Rules (IMPORTANT):
-- Statuses MUST be decided dynamically based on:
-  - Job role
-  - Stage purpose
-  - Seniority level
-- Status flows MUST be realistic for ATS workflows
-- Each status MUST contain:
-  - status_name
-  - description
-  - color_code
-  - tag
+                    Tag Rules (CRITICAL):
+                    - Tags are ENUMERATED VALUES, and they are:
+                      - Sourcing
+                      - Screening
+                      - Line Ups
+                      - Turn Ups
+                      - Selected
+                      - Offer Released
+                      - Offer Accepted
+                    - If any status can resemble any of the tags, then use the tag exactly. Every status will not have a tag.
+                    Here the tags means: -
+                      - Sourcing: When a candidate is sourced.
+                      - Screening: When a candidate is screened.
+                      - Line Ups: When a candidate is lined up for an interview.
+                      - Turn Ups: When a candidate is turned up for an interview.
+                      - Selected: When a candidate is selected.
+                      - Offer Released: When a candidate is offered a job.
+                      - Offer Accepted: When a candidate accepts the offer.
+                    - Its not necessary that all kinds of tags will be there in a pipeline, it should be dynamic based on requirements.
+                    - Do not put unnecessary tags or statuses, it should be dynamic based on requirements.
+                    
 
-Tag Rules (CRITICAL):
-- Each status MUST have exactly ONE tag
-- Tag MUST be chosen ONLY from:
-  - Sourcing
-  - Screening
-  - Line Ups
-  - Turn Ups
-  - Selected
-  - Offer Released
-  - Offer Accepted
+                    Color Rules (CRITICAL):
+                    - Generate color Hex Code based on the stage name and status name.
+                    - It is mandatory to generate a color Hex Code for each stage and status.
 
-Color Rules (CRITICAL):
-- If color is mentioned in the JD:
-  → Use it EXACTLY as mentioned
-- If color is NOT mentioned:
-  → ALWAYS use SKY BLUE (#E3F2FD)
-- NEVER return empty color_code
+                    Return ONLY valid JSON in this exact format:
 
-Return ONLY valid JSON in this exact format:
+                    {{
+                      "pipeline_name": "",
+                      "remarks": "",
+                      "interview_stages": [
+                        {{
+                          "stage_order": 1, # auto order
+                          "stage_name": "",
+                          "description": "",
+                          "color_code": "",
+                          "statuses": [
+                            {{
+                              "status_name": "",
+                              "description": "",
+                              "color_code": "",
+                              "tag": "",
+                              "order": 1  # auto order
+                            }}
+                          ]
+                        }}
+                      ]
+                    }}
 
-{{
-  "pipeline_name": "",
-  "remarks": "",
-  "interview_stages": [
-    {{
-      "stage_order": 1,
-      "stage_name": "",
-      "description": "",
-      "color_code": "",
-      "statuses": [
-        {{
-          "status_name": "",
-          "description": "",
-          "color_code": "",
-          "tag": ""
-        }}
-      ]
-    }}
-  ]
-}}
-
-Critical Rules:
-- ALWAYS return valid JSON
-- NO markdown
-- NO explanation
-- NO comments
-"""
+                    Critical Rules:
+                    - ALWAYS return valid JSON
+                    - NO markdown
+                    - NO explanation
+                    - NO comments
+                    """
         )
 
 

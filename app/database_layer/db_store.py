@@ -65,12 +65,17 @@ def save_pipeline_stages_with_statuses(
 
             statuses = stage.get("statuses", [])
             for idx, status in enumerate(statuses, start=1):
+                # Ensure tag is None if empty string (enum doesn't accept empty strings)
+                tag_value = status.get("tag")
+                if tag_value == "":
+                    tag_value = None
+                
                 pipeline_status = PipelineStageStatus(
                     pipeline_stage_id=pipeline_stage.id,
                     option=status.get("status_name"),
                     color_code=status.get("color_code") or None,
                     order=idx,
-                    tag=status.get("tag"),
+                    tag=tag_value,
                 )
                 db.add(pipeline_status)
 
