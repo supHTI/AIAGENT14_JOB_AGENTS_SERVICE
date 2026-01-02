@@ -27,6 +27,7 @@ celery_app = Celery(
     include=[
         "app.celery.tasks.job_post_tasks",
         "app.celery.tasks.job_agent_tasks",
+        "app.celery.tasks.pipeline_agent_tasks",
     ],
 )
 
