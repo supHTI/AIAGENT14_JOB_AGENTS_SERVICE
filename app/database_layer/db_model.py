@@ -505,11 +505,26 @@ class PipelineStageTag(enum.Enum):
     Offer_Accepted = "Offer Accepted"
 
 
+class PipelineStageStatusTag(enum.Enum):
+    SOURCING = "Sourcing"
+    SCREENING = "Screening"
+    LINE_UPS = "Line Ups"
+    TURN_UPS = "Turn Ups"
+    SELECTED = "Selected"
+    OFFER_RELEASED = "Offer Released"
+    OFFER_ACCEPTED = "Offer Accepted"
+
+
 class PipelineStageStatus(Base):
     """Selectable status options per pipeline stage"""
     __tablename__ = "pipeline_stage_status" 
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    pipeline_stage_id = Column(Integer, ForeignKey("pipeline_stages.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False)
+    option = Column(String(100))
+    color_code = Column(String(20))
+    order = Column(Integer)
+    tag = Column(SAEnum(PipelineStageStatusTag, name="pipeline_stage_status_tag"), nullable=True)
 
     pipeline_stage_id = Column(
         Integer,
