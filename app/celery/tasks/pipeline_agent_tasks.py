@@ -1,6 +1,7 @@
 import json
 import random
 import logging
+import requests
 from datetime import datetime, timezone
 from typing import Dict, List, Any
 
@@ -14,6 +15,9 @@ from app.database_layer.db_store import (
     save_pipeline_stages_with_statuses,
 )
 from app.database_layer.db_model import PipelineStageTag
+from app.core import settings
+from app.database_layer.db_config import SessionLocal
+from app.database_layer.db_model import User
 
 logger = logging.getLogger("app_logger")
 redis_client = get_redis_client()
@@ -23,6 +27,81 @@ DEFAULT_BLUE_COLOR = "#0000FF"
 
 # Valid tag enum values
 VALID_TAG_VALUES = {tag.value for tag in PipelineStageTag}
+
+# Allowed roles for pipeline creation
+ALLOWED_PIPELINE_ROLES = {"super_admin", "admin"}
+
+
+def validate_jwt_token_and_get_user(token: str) -> Dict[str, Any]:
+    """
+    Validate JWT token via AUTH_SERVICE_URL and return user information.
+    Checks if user has admin or super_admin role.
+    
+    Args:
+        token: JWT token string
+        
+    Returns:
+        Dictionary with user_id, role_id, and role_name
+        
+    Raises:
+        ValueError: If token is invalid or user doesn't have required permissions
+    """
+    try:
+        response = requests.post(
+            f"{settings.AUTH_SERVICE_URL}",
+            params={"token": token},
+            headers={"accept": "application/json"}
+        )
+        
+        if response.status_code != 200:
+            raise ValueError("Invalid or expired token")
+        
+        token_info = response.json()
+        user_id = token_info.get("user_id")
+        role_id = token_info.get("role_id")
+        role_name = token_info.get("role_name")
+        
+        if not user_id or not role_id or not role_name:
+            raise ValueError("Token missing required user information")
+        
+        # Check if user has admin or super_admin role
+        role_name_lower = role_name.lower()
+        if role_name_lower not in ALLOWED_PIPELINE_ROLES:
+            raise ValueError(
+                f"Access denied. Only admin and super_admin roles can create pipelines. "
+                f"Your role: {role_name}"
+            )
+        
+        # Verify user exists in database
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user:
+                raise ValueError("User not found in database")
+            
+            # Double-check role from database
+            if user.role and user.role.name:
+                db_role_name = user.role.name.lower()
+                if db_role_name not in ALLOWED_PIPELINE_ROLES:
+                    raise ValueError(
+                        f"Access denied. Only admin and super_admin roles can create pipelines. "
+                        f"Your role: {user.role.name}"
+                    )
+        finally:
+            db.close()
+        
+        return {
+            "user_id": user_id,
+            "role_id": role_id,
+            "role_name": role_name
+        }
+        
+    except requests.RequestException as e:
+        logger.error(f"Authentication service unavailable: {e}")
+        raise ValueError("Authentication service unavailable")
+    except Exception as e:
+        logger.error(f"Token validation error: {e}")
+        raise
 
 
 def normalize_tag(tag_value: Any) -> str | None:
@@ -183,9 +262,18 @@ def pipeline_agent_task(self, task_data: dict):
     file_content_b64 = task_data.get("file_content_b64", "")
     filename = task_data.get("filename", "")
     image_train = task_data.get("image_train", False)
+    token = task_data.get("token", "")
 
     try:
         report_progress(task_id, "STARTED", 10, "Pipeline task started")
+        
+        # Validate JWT token and get user information
+        if not token:
+            raise ValueError("JWT token is required")
+        
+        report_progress(task_id, "PROGRESS", 15, "Validating user permissions")
+        user_info = validate_jwt_token_and_get_user(token)
+        user_id = user_info["user_id"]
 
         if file_content_b64:
             report_progress(task_id, "PROGRESS", 30, "Extracting job description")
@@ -212,7 +300,7 @@ def pipeline_agent_task(self, task_data: dict):
 
         report_progress(task_id, "PROGRESS", 80, "Saving pipeline to database")
        
-        pipeline_db_id = save_pipeline(pipeline_data)
+        pipeline_db_id = save_pipeline(pipeline_data, user_id=user_id)
 
         save_pipeline_stages_with_statuses(
             pipeline_id=pipeline_db_id,

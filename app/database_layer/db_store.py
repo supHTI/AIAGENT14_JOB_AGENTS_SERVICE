@@ -12,14 +12,28 @@ from app.database_layer.db_model import (
 
 logger = logging.getLogger("app_logger")
 
-def save_pipeline(pipeline_data: dict) -> int:
+def save_pipeline(pipeline_data: dict, user_id: int) -> int:
+    """
+    Save pipeline to database with audit fields.
+    
+    Args:
+        pipeline_data: Dictionary containing pipeline data
+        user_id: ID of the user creating the pipeline
+        
+    Returns:
+        Database ID of the created pipeline
+    """
     db = SessionLocal()
     try:
+        now = datetime.now(timezone.utc)
         pipeline = Pipeline(
             pipeline_id=pipeline_data["pipeline_id"],
             name=pipeline_data.get("pipeline_name"),
             remarks=pipeline_data.get("remarks"),
-            created_at=datetime.now(timezone.utc),
+            created_at=now,
+            created_by=user_id,
+            updated_at=now,
+            updated_by=user_id,
         )
         db.add(pipeline)
         db.commit()
