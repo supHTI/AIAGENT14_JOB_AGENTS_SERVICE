@@ -17,6 +17,8 @@ from app.api import (
     pipeline_report_router,
     clawback_report_router,
     exports_report_router,
+    pipeline_agent_router
+    
 )
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,6 +50,7 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(job_agent_router)
+app.include_router(pipeline_agent_router)
 app.include_router(test_api_router)
 app.include_router(job_post_router)
 app.include_router(websocket_router)
@@ -59,6 +62,7 @@ app.include_router(recruiters_report_router)
 app.include_router(pipeline_report_router)
 app.include_router(clawback_report_router)
 app.include_router(exports_report_router)
+
 
 
 

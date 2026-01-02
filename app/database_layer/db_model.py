@@ -16,7 +16,7 @@ Version: 1.0
 Last Modified: [2024-05-20]
 """
 
-from sqlalchemy import Column, DateTime, Integer, String, Boolean, ForeignKey, TIMESTAMP, Text, DECIMAL, Date, SmallInteger, Enum, Index, TypeDecorator, UniqueConstraint
+from sqlalchemy import Column, DateTime, Integer, String, Boolean, ForeignKey, TIMESTAMP, Text, DECIMAL, Date, SmallInteger, Enum, Index, TypeDecorator, UniqueConstraint , text
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.mysql import TINYINT, INTEGER as MYSQL_INTEGER, LONGTEXT
 from sqlalchemy.orm import relationship
@@ -456,20 +456,25 @@ class CandidatePipelineStatus(Base):
     logger.info("CandidatePipelineStatus model configured successfully")
 
 
+
 class Pipeline(Base):
-    """Pipeline header"""
     __tablename__ = "pipelines"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     pipeline_id = Column(String(100), unique=True, nullable=False, index=True)
     name = Column(String(100))
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    created_by = Column(Integer, nullable=True)
-    updated_at = Column(DateTime, nullable=True, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    updated_by = Column(Integer, nullable=True)
+    created_at = Column(DateTime, server_default=text("UTC_TIMESTAMP()"))
+    created_by = Column(Integer, ForeignKey("users.id"))
+    updated_at = Column(DateTime, server_default=text("UTC_TIMESTAMP()"), onupdate=lambda: datetime.now(timezone.utc))
+    updated_by = Column(Integer, ForeignKey("users.id"))
     deleted_at = Column(DateTime, nullable=True)
     deleted_by = Column(Integer, nullable=True)
     remarks = Column(Text)
+
+
+    pipeline_stages = relationship("PipelineStage", back_populates="pipeline")
+    created_by_user = relationship("User", foreign_keys=[created_by])
+    updated_by_user = relationship("User", foreign_keys=[updated_by])
 
 
 class PipelineStage(Base):
@@ -486,6 +491,19 @@ class PipelineStage(Base):
 
     stage_statuses = relationship("PipelineStageStatus", back_populates="pipeline_stage")
 
+    pipeline = relationship(
+        "Pipeline",
+        back_populates="pipeline_stages"
+    )
+class PipelineStageTag(enum.Enum):
+    Sourcing = "Sourcing"
+    Screening = "Screening"
+    Line_Ups = "Line Ups"
+    Turn_Ups = "Turn Ups"
+    Selected = "Selected"
+    Offer_Released = "Offer Released"
+    Offer_Accepted = "Offer Accepted"
+
 
 class PipelineStageStatusTag(enum.Enum):
     SOURCING = "Sourcing"
@@ -499,7 +517,7 @@ class PipelineStageStatusTag(enum.Enum):
 
 class PipelineStageStatus(Base):
     """Selectable status options per pipeline stage"""
-    __tablename__ = "pipeline_stage_status"
+    __tablename__ = "pipeline_stage_status" 
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     pipeline_stage_id = Column(Integer, ForeignKey("pipeline_stages.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False)
@@ -508,7 +526,33 @@ class PipelineStageStatus(Base):
     order = Column(Integer)
     tag = Column(SAEnum(PipelineStageStatusTag, name="pipeline_stage_status_tag"), nullable=True)
 
-    pipeline_stage = relationship("PipelineStage", back_populates="stage_statuses")
+    pipeline_stage_id = Column(
+        Integer,
+        ForeignKey(
+            "pipeline_stages.id",
+            ondelete="CASCADE",
+            onupdate="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    option = Column(String(100), index=True)
+    color_code = Column(String(20))
+    order = Column(Integer, index=True)
+
+    tag = Column(
+        SAEnum(
+            PipelineStageTag,
+            name="pipeline_stage_tag",
+        ),
+        nullable=True,
+    )
+
+    pipeline_stage = relationship(
+        "PipelineStage",
+        back_populates="stage_statuses",
+    )
 
 
 class PipelineStageSpoc(Base):

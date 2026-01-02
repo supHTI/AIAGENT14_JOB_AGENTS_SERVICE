@@ -2,7 +2,7 @@
 import redis
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 from app.core import settings
 
@@ -27,7 +27,7 @@ except Exception as e:
     logger.error(f"Redis initialization error: {e}")
     r = None
 
-def report_progress(task_id: str, status: str, progress: int, message: str = "", task_type: str = "job_agent", error: str = None):
+def report_progress(task_id: str, status: str, progress: int, message: str = "", task_type: str = "job_agent", error: str = None, pipeline_id: str = None):
     """
     Store task progress in Redis as JSON with error handling.
     """
@@ -46,7 +46,8 @@ def report_progress(task_id: str, status: str, progress: int, message: str = "",
         "message": message or "",
         "type": task_type,
         "error": error,
-        "updated_at": datetime.utcnow().isoformat()
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "pipeline_id": pipeline_id
     }
     
     try:

@@ -76,6 +76,6 @@ def job_agent_task(self, task_data: dict):
 
     except Exception as e:
         logger.error(f"Job agent task error: {e}")
-        report_progress(task_id, "FAILURE", 0, f"Error: {str(e)}")
+        report_progress(task_id, "FAILED", 0, f"Error: {str(e)}")
 
         raise
