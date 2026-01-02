@@ -3,6 +3,7 @@ from .endpoints.job_post_api import router as job_post_router
 from .endpoints.websocket_api import router as websocket_router
 from .endpoints.file_api import router as file_router
 from .endpoints.pdf_api import router as pdf_router
+from .endpoints.pipeline_agent_api import router as pipeline_agent_router
 from .reports import (
     jobs_report_router,
     recruiters_report_router,
@@ -26,5 +27,6 @@ __all__ = [
     "report_progress",
     "get_progress",
     "delete_progress",
+    "pipeline_agent_router"
 ]
 
