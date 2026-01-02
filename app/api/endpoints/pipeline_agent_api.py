@@ -1,15 +1,18 @@
 #pipeline_agent_api.py
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from typing import Optional
 from pydantic import BaseModel
 import base64
 import logging
 
 from app.celery.tasks.pipeline_agent_tasks import pipeline_agent_task
+from app.api.deps.auth import require_report_admin
 
 logger = logging.getLogger("app_logger")
 
 router = APIRouter(tags=["Pipeline Agent"])
+security = HTTPBearer()
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 
@@ -24,16 +27,20 @@ class PipelineAgentResponse(BaseModel):
     message: str
 
 
-@router.post("/pipeline_agent", response_model=PipelineAgentResponse)
+@router.post("/pipeline_agent", response_model=PipelineAgentResponse, dependencies=[Depends(require_report_admin)])
 async def pipeline_agent(
     jd_text: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     image_train: Optional[bool] = Form(None),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     if (not jd_text or not jd_text.strip()) and not file:
         raise HTTPException(400, "Either jd_text or file must be provided")
 
     task_data = {}
+    
+    # Extract JWT token
+    token = credentials.credentials
 
     if file:
         file_bytes = await file.read()
@@ -47,9 +54,13 @@ async def pipeline_agent(
             "file_content_b64": base64.b64encode(file_bytes).decode(),
             "filename": file.filename,
             "image_train": image_train,
+            "token": token,
         }
     else:
-        task_data = {"jd_text": jd_text}
+        task_data = {
+            "jd_text": jd_text,
+            "token": token,
+        }
 
     task = pipeline_agent_task.delay(task_data)
 
