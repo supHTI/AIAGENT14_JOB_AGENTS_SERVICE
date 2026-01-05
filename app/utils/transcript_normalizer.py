@@ -124,6 +124,34 @@ class TranscriptNormalizer:
                     # Merge with current segment
                     current['end_time'] = segment.get('end_time', current['end_time'])
                     current['text'] = current.get('text', '') + ' ' + segment.get('text', '')
+                    
+                    # CRITICAL: Preserve all score fields by averaging them
+                    all_score_keys = [
+                        'sentiment_score', 'clarity_score', 'confidence_score',
+                        'fluency_score', 'professionalism_score'
+                    ]
+                    
+                    for score_key in all_score_keys:
+                        try:
+                            current_score = float(current.get(score_key, 0)) if current.get(score_key) is not None else 0
+                            segment_score = float(segment.get(score_key, 0)) if segment.get(score_key) is not None else 0
+                            # Average the scores
+                            if current_score != 0 or segment_score != 0:
+                                current[score_key] = round((current_score + segment_score) / 2, 2)
+                            else:
+                                current[score_key] = 0
+                        except (ValueError, TypeError):
+                            # Ensure key exists
+                            if score_key not in current:
+                                current[score_key] = 0
+                    
+                    # Preserve sentiment and question fields
+                    if 'sentiment' not in current and 'sentiment' in segment:
+                        current['sentiment'] = segment['sentiment']
+                    if 'is_question' not in current:
+                        current['is_question'] = segment.get('is_question', False)
+                    if 'question_text' not in current and 'question_text' in segment:
+                        current['question_text'] = segment['question_text']
                 else:
                     # Save current and start new segment
                     merged.append(current)
@@ -313,7 +341,10 @@ class TranscriptNormalizer:
                 {
                     "speaker": "candidate",
                     "timestamp": "00:01:24",
-                    "text": "I have 5 years of experience in Python and Django"
+                    "text": "I have 5 years of experience in Python and Django",
+                    "sentiment_score": 75,
+                    "clarity_score": 85,
+                    ... other scores ...
                 },
                 ...
             ]
@@ -350,6 +381,16 @@ class TranscriptNormalizer:
                     'end_time': segment.get('end_time', start_time)
                 }
                 
+                # CRITICAL: Preserve ALL enriched score fields from Gemini aggregation
+                score_fields = [
+                    'sentiment_score', 'clarity_score', 'confidence_score',
+                    'fluency_score', 'professionalism_score', 'sentiment',
+                    'is_question', 'question_text'
+                ]
+                
+                for score_field in score_fields:
+                    if score_field in segment:
+                        normalized_segment[score_field] = segment[score_field]
                 normalized.append(normalized_segment)
             
             logger.info(f"Normalization completed: {len(normalized)} segments")

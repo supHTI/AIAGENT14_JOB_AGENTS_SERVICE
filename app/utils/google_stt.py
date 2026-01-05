@@ -67,9 +67,10 @@ class GoogleSTT:
             logger.info(f"Starting Gemini transcription - Audio size: {len(audio_content) / (1024*1024):.2f} MB")
             
             # Check file size - split if too large (>15MB)
-            if len(audio_content) > 15 * 1024 * 1024:
+            if len(audio_content) > 10 * 1024 * 1024:
                 logger.warning(f"Audio file is large, chunking for processing...")
                 large_result = self._transcribe_large_audio(audio_content)
+                # merge all chunks segments and summaries
                 segments = large_result.get('segments', [])
                 chunk_summaries = large_result.get('chunk_summaries', [])
                 try:
@@ -319,6 +320,62 @@ Be realistic and vary scores - not all should be 50 or the same value."""
                             return None
         return None
 
+    def _remove_embedded_json(self, text: str) -> str:
+        """Aggressively remove ALL embedded JSON blocks from text while preserving actual speech."""
+        if not text:
+            return text
+        
+        # Keep removing JSON blocks until none remain
+        max_iterations = 10
+        iteration = 0
+        
+        while iteration < max_iterations:
+            iteration += 1
+            
+            # Find first { and matching }
+            brace_start = text.find('{')
+            if brace_start == -1:
+                # No more JSON blocks found
+                break
+            
+            # Find matching closing brace
+            depth = 0
+            brace_end = -1
+            for i in range(brace_start, len(text)):
+                if text[i] == '{':
+                    depth += 1
+                elif text[i] == '}':
+                    depth -= 1
+                    if depth == 0:
+                        brace_end = i
+                        break
+            
+            if brace_end == -1:
+                # Unmatched brace - remove from start to end
+                text = text[:brace_start].strip()
+                break
+            
+            # Try to validate it's JSON before removing
+            potential_json = text[brace_start:brace_end+1]
+            is_json = False
+            try:
+                json.loads(potential_json)
+                is_json = True
+            except (json.JSONDecodeError, ValueError):
+                # Not valid JSON, but still looks like metadata - check for JSON keys
+                if any(key in potential_json for key in ['"chunk_id', '"segment_id', '"sentiment_score', '"clarity_score', '"chunk_summary', '"overall_analysis']):
+                    is_json = True
+            
+            if is_json:
+                # Remove this JSON block and continue looking
+                text = (text[:brace_start] + text[brace_end+1:]).strip()
+            else:
+                # Not JSON, might be part of speech - stop here
+                break
+        
+        return text.strip()
+
+
     def _annotate_segments_with_gemini(self, segments: List[Dict]) -> List[Dict]:
         """Ask Gemini to annotate segments with realistic scores. Returns segments with scores applied."""
         if not segments:
@@ -398,35 +455,65 @@ Be realistic and vary scores - not all should be 50 or the same value."""
 
             for segment in raw_segments:
                 raw_text = (segment.get('text', '') or '').strip()
-                # First, try to extract any embedded JSON in this segment's text
+                
+                # Extract and remove ALL embedded JSON blocks from segment text
+                # Keep extracting until no more JSON is found
                 extracted = self._extract_json_from_text(raw_text)
                 if extracted and not extracted_chunk_json:
                     extracted_chunk_json = extracted
-                    # Remove the JSON portion from text by replacing the JSON substring if found
-                    # best-effort: remove the first '{' to the matching '}' occurrence
-                    brace_start = raw_text.find('{')
-                    if brace_start != -1:
-                        # attempt to remove by finding matching brace
-                        depth = 0
-                        end_idx = None
-                        for i in range(brace_start, len(raw_text)):
-                            if raw_text[i] == '{':
-                                depth += 1
-                            elif raw_text[i] == '}':
-                                depth -= 1
-                                if depth == 0:
-                                    end_idx = i
-                                    break
-                        if end_idx:
-                            raw_text = (raw_text[:brace_start] + raw_text[end_idx+1:]).strip()
-
+                    logger.debug(f"Extracted chunk JSON from segment (keys: {list(extracted.keys())})")
+                
+                # Aggressively remove ALL JSON blocks from text (may have multiple)
+                raw_text = self._remove_embedded_json(raw_text)
+                
+                # Clean up leftover backticks, braces, and malformed markers
+                raw_text = re.sub(r'```[\s\S]*?```', '', raw_text)  # Remove markdown code blocks
+                raw_text = re.sub(r'`+', '', raw_text)  # Remove stray backticks
+                raw_text = re.sub(r'^\s*[{}\[\]]+\s*', '', raw_text)  # Remove leading braces
+                raw_text = re.sub(r'\s*[{}\[\]]+\s*$', '', raw_text)  # Remove trailing braces
+                
                 # Normalize whitespace
                 text = re.sub(r"\s+", " ", raw_text)
+                
+                # Remove any remaining markdown code blocks
+                text = re.sub(r'```(?:json)?\s*.*?```', '', text, flags=re.DOTALL).strip()
+                
+                # If still starts with json marker, extract just the text before it
+                if text.strip().startswith('```'):
+                    text = re.sub(r'^```.*?\n', '', text).rstrip('`').strip()
+                
+                # Final cleanup: remove any trailing/leading special chars
+                text = text.strip()
 
+                # Determine speaker role: interviewer vs candidate based on content patterns
+                raw_speaker = (segment.get('speaker', 'Speaker 1') or 'Speaker 1').lower()
+                
+                # Skip if text is too short or is mostly JSON
+                if len(text) < 5 or 'chunk_id' in text or 'chunk_summary' in text or '{' in text[:20]:
+                    logger.warning(f"Skipping corrupted segment: {text[:50]}")
+                    continue
+                
+                # Interviewer patterns: asks questions, evaluates, probes
+                interviewer_markers = ['can you', 'what ', 'how do you', 'tell me', 'tell us', 'describe', 'explain', 'share', 'elaborate', 'walk me through', 'do you have', 'any questions for', 'anything else', 'please']
+                # Candidate patterns: responds, answers, describes experience
+                candidate_markers = ['i have', 'i\'ve', 'i believe', 'i think', 'my background', 'my experience', 'certainly', 'yes', 'absolutely', 'well', 'so', 'basically']
+                
+                text_lower = text.lower()
+                is_interviewer = any(marker in text_lower for marker in interviewer_markers)
+                is_candidate = any(marker in text_lower for marker in candidate_markers)
+                
+                # Determine role: if text starts with question patterns, it's interviewer
+                if text_lower.rstrip().endswith('?') or (is_interviewer and not is_candidate):
+                    determined_speaker = 'interviewer'
+                elif is_candidate:
+                    determined_speaker = 'candidate'
+                else:
+                    determined_speaker = raw_speaker if 'candidate' in raw_speaker or 'interview' in raw_speaker else 'interviewer'
+                
                 # Build processed segment, ensuring numeric defaults
                 processed_segment = {
                     "segment_id": int(segment.get('segment_id', 0)),
-                    "speaker": (segment.get('speaker', 'Speaker 1') or 'Speaker 1').lower(),
+                    "speaker": determined_speaker,
                     "start_time": float(segment.get('start_time', 0)),
                     "end_time": float(segment.get('end_time', 0)),
                     "text": text,
@@ -452,6 +539,19 @@ Be realistic and vary scores - not all should be 50 or the same value."""
                     pass
 
                 segments.append(processed_segment)
+            
+            # Filter out empty or corrupted segments
+            segments = [s for s in segments if s.get('text', '').strip() and len(s.get('text', '')) > 5]
+            
+            if not segments:
+                logger.warning("All segments were filtered out due to corruption. Returning empty result.")
+                return {
+                    'chunk_id': data.get('chunk_id', 0),
+                    'total_segments': 0,
+                    'chunk_summary': {},
+                    'overall_analysis': {},
+                    'segments': []
+                }
 
             # If embedded chunk JSON was found, use its summaries
             if extracted_chunk_json:
@@ -659,28 +759,34 @@ Be realistic and vary scores - not all should be 50 or the same value."""
             List of transcript segments with analysis
         """
         try:
-            # For large files, split into smaller chunks
+            # For large files, split into smaller chunks based on desired duration (default 5 minutes)
             # WAV format: 44-byte header + audio data
-            # Split data into ~10MB chunks to avoid API limits
-            chunk_size = 10 * 1024 * 1024  # 10MB chunks
+            # Use duration-based chunking to avoid very long audio in a single chunk (e.g., low-bitrate compressed files
+            # can be small in bytes but long in time). Default assumes 16kHz mono, 16-bit PCM WAV.
+            CHUNK_DURATION_SECONDS = 5 * 60  # 5 minutes
+            SAMPLE_RATE = 16000  # Hz
+            BYTES_PER_SAMPLE = 2  # 16-bit PCM -> 2 bytes per sample
+            bytes_per_second = SAMPLE_RATE * BYTES_PER_SAMPLE  # e.g., 16000 * 2 = 32000 bytes/s
+            chunk_size = int(CHUNK_DURATION_SECONDS * bytes_per_second)
             wav_header = audio_content[:44]  # Standard WAV header
             audio_data = audio_content[44:]  # Audio data after header
-            
+
             all_segments = []
             chunk_summaries = []
             time_offset = 0.0
             chunk_num = 1
-            
+
             # Process chunks
             for i in range(0, len(audio_data), chunk_size):
                 chunk_data = audio_data[i:i + chunk_size]
-                
+
                 # Reconstruct WAV chunk with header
                 chunk_bytes = wav_header + chunk_data
-                
+
+                chunk_duration_seconds = len(chunk_data) / float(bytes_per_second)
                 chunk_size_mb = len(chunk_bytes) / (1024 * 1024)
-                logger.info(f"Processing chunk {chunk_num}, size: {chunk_size_mb:.2f} MB")
-                
+                logger.info(f"Processing chunk {chunk_num}, size: {chunk_size_mb:.2f} MB, approx duration: {chunk_duration_seconds:.1f}s")
+
                 # Detect mime type
                 mime_type = self._detect_mime_type(chunk_bytes)
                 
@@ -740,9 +846,8 @@ Be realistic and vary scores - not all should be 50 or the same value."""
                             segment['end_time'] += time_offset
                             all_segments.append(segment)
 
-                # Update time offset for next chunk
-                # Assuming 16kHz mono, 2 bytes per sample: duration = bytes / (16000 * 2)
-                chunk_duration_seconds = len(chunk_data) / (16000 * 2)
+                # Update time offset for next chunk (use bytes_per_second so consistent with chunking)
+                chunk_duration_seconds = len(chunk_data) / float(bytes_per_second)
                 time_offset += chunk_duration_seconds
                 chunk_num += 1
             
