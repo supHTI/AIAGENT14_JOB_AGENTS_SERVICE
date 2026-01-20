@@ -2235,6 +2235,1553 @@ def export_job_details_pdf(
     return buffer.getvalue()
 
 
+def export_jobs_summary_pdf(
+    title: str,
+    summary_tiles: List[Tuple[str, str]],
+    jobs_summary: List[Mapping],
+    company_summary: List[Mapping],
+    hr_summary: List[Mapping],
+    daily_breakdown: List[Mapping],
+    charts: Mapping[str, List[Mapping]],
+    generated_by: str = "",
+    date_range: Tuple[date, date] = (None, None),
+) -> bytes:
+    """
+    Export jobs summary report to PDF with tag-based statuses, company details, and daily breakdowns.
+    """
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    c.setTitle(title)
+
+    # IST Conversion
+    utc_now = datetime.utcnow()
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    date_str = ist_now.strftime('%d-%b-%Y %I:%M %p IST')
+    
+    subtitle = f"Generated: {date_str}"
+    
+    # Date Range sub-text
+    d_start, d_end = date_range
+    if d_start and d_end:
+        range_str = f"{d_start.strftime('%d %b %Y')} - {d_end.strftime('%d %b %Y')}"
+    else:
+        range_str = "All Time"
+        
+    subtitle += f" | Range: {range_str}"
+    
+    if generated_by:
+        subtitle += f" | By: {generated_by}"
+
+    _draw_header_footer(c, title, subtitle)
+    y = height - 110
+    margin = 40
+
+    # Summary tiles
+    y = _draw_tiles(c, summary_tiles, y)
+    y -= 20
+
+    # Daily Status Chart - Dynamic based on date range
+    daily_tag_trends = charts.get("daily_tag_trends", [])
+    if daily_tag_trends:
+        if y < 300:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Daily Status")
+        y -= 20
+        
+        # Build multi-line chart for daily status trends
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        # Parse dates and prepare data
+        dates_raw = [item.get("date", "") for item in daily_tag_trends]
+        sourced = [item.get("sourced", 0) for item in daily_tag_trends]
+        screened = [item.get("screened", 0) for item in daily_tag_trends]
+        lined_up = [item.get("lined_up", 0) for item in daily_tag_trends]
+        turned_up = [item.get("turned_up", 0) for item in daily_tag_trends]
+        offer_accepted = [item.get("offer_accepted", 0) for item in daily_tag_trends]
+        
+        # Determine group type from date range
+        d_start, d_end = date_range
+        total_days = 365  # Default
+        group_type = "daily"
+        if d_start and d_end:
+            total_days = (d_end - d_start).days + 1
+            if total_days == 1:
+                group_type = "hourly"
+            elif total_days <= 30:
+                group_type = "daily"
+            elif total_days <= 365:
+                group_type = "weekly"
+            else:
+                group_type = "monthly"
+        
+        # Format labels based on group type
+        date_labels = []
+        for d_str in dates_raw:
+            if group_type == "hourly":
+                # Already in HH:00 format
+                date_labels.append(str(d_str))
+            elif group_type == "daily":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            elif group_type == "weekly":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            else:  # monthly
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%b-%Y'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%b-%Y'))
+                    else:
+                        date_labels.append(str(d_str)[:7])
+                except:
+                    date_labels.append(str(d_str)[:7])
+        
+        # Use numeric positions for plotting
+        x_positions = range(len(dates_raw))
+        
+        ax.plot(x_positions, sourced, marker='o', label='Sourced', linewidth=2, markersize=4)
+        ax.plot(x_positions, screened, marker='s', label='Screened', linewidth=2, markersize=4)
+        ax.plot(x_positions, lined_up, marker='^', label='Lined Up', linewidth=2, markersize=4)
+        ax.plot(x_positions, turned_up, marker='v', label='Turned Up', linewidth=2, markersize=4)
+        ax.plot(x_positions, offer_accepted, marker='d', label='Offer Accepted', linewidth=2, markersize=4)
+        
+        ax.set_xlabel('Date' if group_type != "hourly" else 'Hour', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Daily Status', fontsize=12, fontweight='bold')
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Set X-axis labels with dynamic formatting
+        rotation = 45 if len(date_labels) > 10 else (45 if group_type == "hourly" and len(date_labels) > 12 else 0)
+        # Show every Nth label to prevent overlap (max 15 labels)
+        if len(date_labels) > 15:
+            step = max(1, len(date_labels) // 15)
+            ax.set_xticks(x_positions[::step])
+            ax.set_xticklabels(date_labels[::step], rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        else:
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels(date_labels, rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
+
+    # Page 2: Company Performance and Daily Joined vs Rejected Charts
+    daily_joined_rejected = charts.get("daily_joined_rejected", [])
+    company_performance = charts.get("company_performance", [])
+    if company_performance or daily_joined_rejected:
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        y = height - 110
+    
+    # Company Performance Chart
+    if company_performance:
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Company Performance")
+        y -= 20
+        
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        # Truncate company names to prevent overlap
+        companies_full = [item.get("company_name", "") for item in company_performance]
+        # Determine max length based on number of companies
+        num_companies = len(companies_full)
+        if num_companies <= 5:
+            max_len = 20
+        elif num_companies <= 10:
+            max_len = 15
+        else:
+            max_len = 12
+        
+        companies = [name[:max_len] + "..." if len(name) > max_len else name for name in companies_full]
+        joined = [item.get("total_joined", 0) for item in company_performance]
+        sourced = [item.get("total_sourced", 0) for item in company_performance]
+        screened = [item.get("total_screened", 0) for item in company_performance]
+        
+        x_pos = range(len(companies))
+        width_bar = 0.25
+        
+        ax.bar([x - width_bar for x in x_pos], joined, width_bar, label='Joined', color='#10b981')
+        ax.bar(x_pos, sourced, width_bar, label='Sourced', color='#2563eb')
+        ax.bar([x + width_bar for x in x_pos], screened, width_bar, label='Screened', color='#0ea5e9')
+        
+        ax.set_xlabel('Company', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Company Performance', fontsize=12, fontweight='bold')
+        ax.set_xticks(x_pos)
+        
+        # Dynamic rotation and spacing for company names
+        if num_companies > 8:
+            # Rotate labels and show every Nth to prevent overlap
+            step = max(1, num_companies // 15) if num_companies > 15 else 1
+            ax.set_xticks(x_pos[::step])
+            ax.set_xticklabels(companies[::step], rotation=45, ha='right', fontsize=8)
+        elif num_companies > 5:
+            # Rotate but show all
+            ax.set_xticklabels(companies, rotation=45, ha='right', fontsize=8)
+        else:
+            # Show all without rotation
+            ax.set_xticklabels(companies, rotation=0, ha='center', fontsize=9)
+        
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
+    
+    # Daily Joined vs Rejected Chart - On same page as Company Performance
+    if daily_joined_rejected and len(daily_joined_rejected) > 0:
+        # Add vertical separation
+        y -= 30
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Daily Joined vs Rejected")
+        y -= 20
+        
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        dates_raw = [item.get("date", "") for item in daily_joined_rejected]
+        joined = [item.get("joined", 0) for item in daily_joined_rejected]
+        rejected = [item.get("rejected", 0) for item in daily_joined_rejected]
+        
+        # Determine group type from date range
+        d_start, d_end = date_range
+        total_days = 365  # Default
+        group_type = "daily"
+        if d_start and d_end:
+            total_days = (d_end - d_start).days + 1
+            if total_days == 1:
+                group_type = "hourly"
+            elif total_days <= 30:
+                group_type = "daily"
+            elif total_days <= 365:
+                group_type = "weekly"
+            else:
+                group_type = "monthly"
+        
+        # Format labels based on group type
+        date_labels = []
+        for d_str in dates_raw:
+            if group_type == "hourly":
+                date_labels.append(str(d_str))
+            elif group_type == "daily":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            elif group_type == "weekly":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            else:  # monthly
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%b-%Y'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%b-%Y'))
+                    else:
+                        date_labels.append(str(d_str)[:7])
+                except:
+                    date_labels.append(str(d_str)[:7])
+        
+        x_pos = range(len(dates_raw))
+        width_bar = 0.35
+        
+        ax.bar([x - width_bar/2 for x in x_pos], joined, width_bar, label='Joined', color='#10b981')
+        ax.bar([x + width_bar/2 for x in x_pos], rejected, width_bar, label='Rejected', color='#ef4444')
+        
+        ax.set_xlabel('Date' if group_type != "hourly" else 'Hour', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Daily Joined vs Rejected', fontsize=12, fontweight='bold')
+        
+        # Set X-axis labels with dynamic formatting (max 15 labels)
+        rotation = 45 if len(date_labels) > 10 else (45 if group_type == "hourly" and len(date_labels) > 12 else 0)
+        if len(date_labels) > 15:
+            step = max(1, len(date_labels) // 15)
+            ax.set_xticks(x_pos[::step])
+            ax.set_xticklabels(date_labels[::step], rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        else:
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(date_labels, rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
+
+    # Jobs Summary Table - Start on page 3
+    if jobs_summary:
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        y = height - 110
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Jobs Summary")
+        y -= 20
+        
+        # Table headers
+        headers = ["Job Title", "Company", "Sourced", "Screened", "Lined Up", "Turned Up", "Offer Accepted", "Joined", "Rejected"]
+        col_widths = [120, 100, 50, 50, 50, 50, 60, 50, 50]
+        
+        c.setFont("Helvetica-Bold", 8)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        x = margin
+        for i, header in enumerate(headers):
+            c.drawString(x, y, header[:15])
+            x += col_widths[i]
+        y -= 15
+        
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.line(margin, y, width - margin, y)
+        y -= 10
+        
+        # Table rows - Show ALL data (no truncation)
+        c.setFont("Helvetica", 7)
+        c.setFillColor(colors.black)
+        for row in jobs_summary:
+            if y < 60:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                # Redraw headers
+                c.setFont("Helvetica-Bold", 8)
+                c.setFillColor(colors.HexColor("#0f172a"))
+                x = margin
+                for i, header in enumerate(headers):
+                    c.drawString(x, y, header[:15])
+                    x += col_widths[i]
+                y -= 15
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(margin, y, width - margin, y)
+                y -= 10
+                c.setFont("Helvetica", 7)
+                c.setFillColor(colors.black)
+            
+            x = margin
+            job_title = str(row.get("job_title", ""))[:18]
+            company = str(row.get("company_name", ""))[:15]
+            c.drawString(x, y, job_title)
+            x += col_widths[0]
+            c.drawString(x, y, company)
+            x += col_widths[1]
+            c.drawString(x, y, str(row.get("sourced", 0)))
+            x += col_widths[2]
+            c.drawString(x, y, str(row.get("screened", 0)))
+            x += col_widths[3]
+            c.drawString(x, y, str(row.get("lined_up", 0)))
+            x += col_widths[4]
+            c.drawString(x, y, str(row.get("turned_up", 0)))
+            x += col_widths[5]
+            c.drawString(x, y, str(row.get("offer_accepted", 0)))
+            x += col_widths[6]
+            c.drawString(x, y, str(row.get("joined", 0)))
+            x += col_widths[7]
+            c.drawString(x, y, str(row.get("rejected", 0)))
+            y -= 12
+
+    # Company Summary Table - Add vertical gap from previous content
+    if company_summary:
+        if y < 200:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+        else:
+            # Add vertical gap
+            y -= 40
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Company Summary")
+        y -= 20
+        
+        # Table headers
+        headers = ["Company", "Jobs", "Openings", "Sourced", "Screened", "Lined Up", "Turned Up", "Offer Accepted", "Joined", "Rejected"]
+        col_widths = [120, 40, 50, 50, 50, 50, 50, 60, 50, 50]
+        
+        c.setFont("Helvetica-Bold", 8)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        x = margin
+        for i, header in enumerate(headers):
+            c.drawString(x, y, header[:12])
+            x += col_widths[i]
+        y -= 15
+        
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.line(margin, y, width - margin, y)
+        y -= 10
+        
+        # Table rows - Show ALL data (no truncation)
+        c.setFont("Helvetica", 7)
+        c.setFillColor(colors.black)
+        for row in company_summary:
+            if y < 60:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                # Redraw headers
+                c.setFont("Helvetica-Bold", 8)
+                c.setFillColor(colors.HexColor("#0f172a"))
+                x = margin
+                for i, header in enumerate(headers):
+                    c.drawString(x, y, header[:12])
+                    x += col_widths[i]
+                y -= 15
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(margin, y, width - margin, y)
+                y -= 10
+                c.setFont("Helvetica", 7)
+                c.setFillColor(colors.black)
+            
+            x = margin
+            company = str(row.get("company_name", ""))[:18]
+            c.drawString(x, y, company)
+            x += col_widths[0]
+            c.drawString(x, y, str(row.get("total_jobs", 0)))
+            x += col_widths[1]
+            c.drawString(x, y, str(row.get("total_openings", 0)))
+            x += col_widths[2]
+            c.drawString(x, y, str(row.get("total_sourced", 0)))
+            x += col_widths[3]
+            c.drawString(x, y, str(row.get("total_screened", 0)))
+            x += col_widths[4]
+            c.drawString(x, y, str(row.get("total_lined_up", 0)))
+            x += col_widths[5]
+            c.drawString(x, y, str(row.get("total_turned_up", 0)))
+            x += col_widths[6]
+            c.drawString(x, y, str(row.get("total_offer_accepted", 0)))
+            x += col_widths[7]
+            c.drawString(x, y, str(row.get("total_joined", 0)))
+            x += col_widths[8]
+            c.drawString(x, y, str(row.get("total_rejected", 0)))
+            y -= 12
+
+    # HR Summary Table - Add vertical gap from Company Summary
+    if hr_summary:
+        if y < 200:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+        else:
+            # Add vertical gap from previous table
+            y -= 40
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "HR Summary")
+        y -= 20
+        
+        # Table headers
+        headers = ["HR Name", "Candidates", "Activities", "Joined", "Rejected", "Total Activity"]
+        col_widths = [150, 70, 70, 60, 60, 80]
+        
+        c.setFont("Helvetica-Bold", 8)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        x = margin
+        for i, header in enumerate(headers):
+            c.drawString(x, y, header[:15])
+            x += col_widths[i]
+        y -= 15
+        
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.line(margin, y, width - margin, y)
+        y -= 10
+        
+        # Table rows - Show ALL data (no truncation)
+        c.setFont("Helvetica", 7)
+        c.setFillColor(colors.black)
+        for row in hr_summary:
+            if y < 60:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                # Redraw headers
+                c.setFont("Helvetica-Bold", 8)
+                c.setFillColor(colors.HexColor("#0f172a"))
+                x = margin
+                for i, header in enumerate(headers):
+                    c.drawString(x, y, header[:15])
+                    x += col_widths[i]
+                y -= 15
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(margin, y, width - margin, y)
+                y -= 10
+                c.setFont("Helvetica", 7)
+                c.setFillColor(colors.black)
+            
+            x = margin
+            hr_name = str(row.get("hr_name", ""))[:20]
+            c.drawString(x, y, hr_name)
+            x += col_widths[0]
+            c.drawString(x, y, str(row.get("candidate_count", 0)))
+            x += col_widths[1]
+            c.drawString(x, y, str(row.get("activity_count", 0)))
+            x += col_widths[2]
+            c.drawString(x, y, str(row.get("joined", 0)))
+            x += col_widths[3]
+            c.drawString(x, y, str(row.get("rejected", 0)))
+            x += col_widths[4]
+            c.drawString(x, y, str(row.get("total_activity", 0)))
+            y -= 12
+
+    c.showPage()
+    _draw_header_footer(c, title, subtitle)
+    c.setFont("Helvetica", 10)
+    c.setFillColor(colors.HexColor("#666666"))
+    c.drawCentredString(width/2, height/2, "END OF REPORT")
+
+    c.save()
+    return buffer.getvalue()
+
+
+def export_recruiters_summary_pdf(
+    title: str,
+    summary_tiles: List[Tuple[str, str]],
+    recruiters_summary: List[Mapping],
+    daily_breakdown: List[Mapping],
+    charts: Mapping[str, List[Mapping]],
+    generated_by: str = "",
+    date_range: Tuple[date, date] = (None, None),
+) -> bytes:
+    """
+    Export recruiters summary report to PDF with tag-based statuses and daily breakdowns.
+    """
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    c.setTitle(title)
+
+    # IST Conversion
+    utc_now = datetime.utcnow()
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    date_str = ist_now.strftime('%d-%b-%Y %I:%M %p IST')
+    
+    subtitle = f"Generated: {date_str}"
+    
+    # Date Range sub-text
+    d_start, d_end = date_range
+    if d_start and d_end:
+        range_str = f"{d_start.strftime('%d %b %Y')} - {d_end.strftime('%d %b %Y')}"
+    else:
+        range_str = "All Time"
+        
+    subtitle += f" | Range: {range_str}"
+    
+    if generated_by:
+        subtitle += f" | By: {generated_by}"
+
+    _draw_header_footer(c, title, subtitle)
+    y = height - 110
+    margin = 40
+
+    # Summary tiles
+    y = _draw_tiles(c, summary_tiles, y)
+    y -= 20
+
+    # Daily Status Chart - Dynamic based on date range
+    daily_status_trends = charts.get("daily_status_trends", [])
+    if daily_status_trends:
+        if y < 300:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Daily Status")
+        y -= 20
+        
+        # Build multi-line chart
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        dates_raw = [item.get("date", "") for item in daily_status_trends]
+        sourced = [item.get("sourced", 0) for item in daily_status_trends]
+        screened = [item.get("screened", 0) for item in daily_status_trends]
+        lined_up = [item.get("lined_up", 0) for item in daily_status_trends]
+        turned_up = [item.get("turned_up", 0) for item in daily_status_trends]
+        offer_accepted = [item.get("offer_accepted", 0) for item in daily_status_trends]
+        
+        # Determine group type from date range
+        d_start, d_end = date_range
+        total_days = 365
+        group_type = "daily"
+        if d_start and d_end:
+            total_days = (d_end - d_start).days + 1
+            if total_days == 1:
+                group_type = "hourly"
+            elif total_days <= 30:
+                group_type = "daily"
+            elif total_days <= 365:
+                group_type = "weekly"
+            else:
+                group_type = "monthly"
+        
+        # Format labels based on group type
+        date_labels = []
+        for d_str in dates_raw:
+            if group_type == "hourly":
+                date_labels.append(str(d_str))
+            elif group_type == "daily":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            elif group_type == "weekly":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            else:  # monthly
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%b-%Y'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%b-%Y'))
+                    else:
+                        date_labels.append(str(d_str)[:7])
+                except:
+                    date_labels.append(str(d_str)[:7])
+        
+        x_positions = range(len(dates_raw))
+        
+        ax.plot(x_positions, sourced, marker='o', label='Sourced', linewidth=2, markersize=4)
+        ax.plot(x_positions, screened, marker='s', label='Screened', linewidth=2, markersize=4)
+        ax.plot(x_positions, lined_up, marker='^', label='Lined Up', linewidth=2, markersize=4)
+        ax.plot(x_positions, turned_up, marker='v', label='Turned Up', linewidth=2, markersize=4)
+        ax.plot(x_positions, offer_accepted, marker='d', label='Offer Accepted', linewidth=2, markersize=4)
+        
+        ax.set_xlabel('Date' if group_type != "hourly" else 'Hour', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Daily Status', fontsize=12, fontweight='bold')
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Set X-axis labels with dynamic formatting (max 15 labels)
+        rotation = 45 if len(date_labels) > 10 else (45 if group_type == "hourly" and len(date_labels) > 12 else 0)
+        if len(date_labels) > 15:
+            step = max(1, len(date_labels) // 15)
+            ax.set_xticks(x_positions[::step])
+            ax.set_xticklabels(date_labels[::step], rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        else:
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels(date_labels, rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
+
+    # Page 2: Daily Joined vs Rejected and Top Recruiters Performance Charts
+    daily_joined_rejected = charts.get("daily_joined_rejected", [])
+    top_recruiters_performance = charts.get("top_recruiters_performance", [])
+    
+    # Check if we have actual data
+    has_page2_charts = (daily_joined_rejected and len(daily_joined_rejected) > 0) or \
+                       (top_recruiters_performance and len(top_recruiters_performance) > 0)
+    
+    if has_page2_charts:
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        y = height - 110
+    
+    # Daily Joined vs Rejected Chart
+    if daily_joined_rejected and len(daily_joined_rejected) > 0:
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Daily Joined vs Rejected")
+        y -= 20
+        
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        dates_raw = [item.get("date", "") for item in daily_joined_rejected]
+        joined = [item.get("joined", 0) for item in daily_joined_rejected]
+        rejected = [item.get("rejected", 0) for item in daily_joined_rejected]
+        
+        # Determine group type from date range
+        d_start, d_end = date_range
+        total_days = 365
+        group_type = "daily"
+        if d_start and d_end:
+            total_days = (d_end - d_start).days + 1
+            if total_days == 1:
+                group_type = "hourly"
+            elif total_days <= 30:
+                group_type = "daily"
+            elif total_days <= 365:
+                group_type = "weekly"
+            else:
+                group_type = "monthly"
+        
+        # Format labels based on group type
+        date_labels = []
+        for d_str in dates_raw:
+            if group_type == "hourly":
+                date_labels.append(str(d_str))
+            elif group_type == "daily":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            elif group_type == "weekly":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            else:  # monthly
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%b-%Y'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d.strftime('%b-%Y'))
+                    else:
+                        date_labels.append(str(d_str)[:7])
+                except:
+                    date_labels.append(str(d_str)[:7])
+        
+        x_pos = range(len(dates_raw))
+        width_bar = 0.35
+        
+        ax.bar([x - width_bar/2 for x in x_pos], joined, width_bar, label='Joined', color='#10b981')
+        ax.bar([x + width_bar/2 for x in x_pos], rejected, width_bar, label='Rejected', color='#ef4444')
+        
+        ax.set_xlabel('Date' if group_type != "hourly" else 'Hour', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Daily Joined vs Rejected', fontsize=12, fontweight='bold')
+        
+        # Set X-axis labels with dynamic formatting (max 15 labels)
+        rotation = 45 if len(date_labels) > 10 else (45 if group_type == "hourly" and len(date_labels) > 12 else 0)
+        if len(date_labels) > 15:
+            step = max(1, len(date_labels) // 15)
+            ax.set_xticks(x_pos[::step])
+            ax.set_xticklabels(date_labels[::step], rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        else:
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(date_labels, rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
+    
+    # Top Recruiters Performance Chart
+    if top_recruiters_performance and len(top_recruiters_performance) > 0:
+        # Add vertical separation
+        y -= 30
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Top Recruiters Performance")
+        y -= 20
+        
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        recruiters_full = [item.get("recruiter_name", "") for item in top_recruiters_performance]
+        num_recruiters = len(recruiters_full)
+        if num_recruiters <= 5:
+            max_len = 20
+        elif num_recruiters <= 10:
+            max_len = 15
+        else:
+            max_len = 12
+        
+        recruiters = [name[:max_len] + "..." if len(name) > max_len else name for name in recruiters_full]
+        joined = [item.get("joined", 0) for item in top_recruiters_performance]
+        sourced = [item.get("sourced", 0) for item in top_recruiters_performance]
+        screened = [item.get("screened", 0) for item in top_recruiters_performance]
+        
+        x_pos = range(len(recruiters))
+        width_bar = 0.25
+        
+        ax.bar([x - width_bar for x in x_pos], joined, width_bar, label='Joined', color='#10b981')
+        ax.bar(x_pos, sourced, width_bar, label='Sourced', color='#2563eb')
+        ax.bar([x + width_bar for x in x_pos], screened, width_bar, label='Screened', color='#0ea5e9')
+        
+        ax.set_xlabel('Recruiter', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Top Recruiters Performance', fontsize=12, fontweight='bold')
+        ax.set_xticks(x_pos)
+        
+        # Dynamic rotation and spacing for recruiter names
+        if num_recruiters > 8:
+            step = max(1, num_recruiters // 15) if num_recruiters > 15 else 1
+            ax.set_xticks(x_pos[::step])
+            ax.set_xticklabels(recruiters[::step], rotation=45, ha='right', fontsize=8)
+        elif num_recruiters > 5:
+            ax.set_xticklabels(recruiters, rotation=45, ha='right', fontsize=8)
+        else:
+            ax.set_xticklabels(recruiters, rotation=0, ha='center', fontsize=9)
+        
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
+
+    # Recruiters Summary Table - Start on next page
+    if recruiters_summary and len(recruiters_summary) > 0:
+        # Always create a new page for the table to ensure proper spacing
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        y = height - 110
+        
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Recruiters Summary")
+        y -= 20
+        
+        # Table headers
+        headers = ["Recruiter Name", "Candidates", "Sourced", "Screened", "Lined Up", "Turned Up", "Offer Accepted", "Joined", "Rejected", "Activities", "Logins"]
+        col_widths = [120, 60, 50, 50, 50, 50, 60, 50, 50, 60, 50]
+        
+        c.setFont("Helvetica-Bold", 8)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        x = margin
+        for i, header in enumerate(headers):
+            c.drawString(x, y, header[:12])
+            x += col_widths[i]
+        y -= 15
+        
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.line(margin, y, width - margin, y)
+        y -= 10
+        
+        # Table rows - Show ALL data (no truncation)
+        c.setFont("Helvetica", 7)
+        c.setFillColor(colors.black)
+        for row in recruiters_summary:
+            if y < 60:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                # Redraw headers
+                c.setFont("Helvetica-Bold", 8)
+                c.setFillColor(colors.HexColor("#0f172a"))
+                x = margin
+                for i, header in enumerate(headers):
+                    c.drawString(x, y, header[:12])
+                    x += col_widths[i]
+                y -= 15
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(margin, y, width - margin, y)
+                y -= 10
+                c.setFont("Helvetica", 7)
+                c.setFillColor(colors.black)
+            
+            x = margin
+            recruiter_name = str(row.get("recruiter_name", ""))[:18]
+            c.drawString(x, y, recruiter_name)
+            x += col_widths[0]
+            c.drawString(x, y, str(row.get("candidates", 0)))
+            x += col_widths[1]
+            c.drawString(x, y, str(row.get("sourced", 0)))
+            x += col_widths[2]
+            c.drawString(x, y, str(row.get("screened", 0)))
+            x += col_widths[3]
+            c.drawString(x, y, str(row.get("lined_up", 0)))
+            x += col_widths[4]
+            c.drawString(x, y, str(row.get("turned_up", 0)))
+            x += col_widths[5]
+            c.drawString(x, y, str(row.get("offer_accepted", 0)))
+            x += col_widths[6]
+            c.drawString(x, y, str(row.get("joined", 0)))
+            x += col_widths[7]
+            c.drawString(x, y, str(row.get("rejected", 0)))
+            x += col_widths[8]
+            c.drawString(x, y, str(row.get("activities", 0)))
+            x += col_widths[9]
+            c.drawString(x, y, str(row.get("logins", 0)))
+            y -= 12
+    
+    # Only show END OF REPORT if we've displayed some content
+    # Check if we have any content to show
+    has_content = (
+        (daily_status_trends and len(daily_status_trends) > 0) or
+        has_page2_charts or
+        (recruiters_summary and len(recruiters_summary) > 0)
+    )
+    
+    if has_content:
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        c.setFont("Helvetica", 10)
+        c.setFillColor(colors.HexColor("#666666"))
+        c.drawCentredString(width/2, height/2, "END OF REPORT")
+
+    c.save()
+    return buffer.getvalue()
+
+
+def export_recruiter_performance_pdf(
+    title: str,
+    summary_tiles: List[Tuple[str, str]],
+    recruiter_metadata: Mapping,
+    jobs_assigned: List[Mapping],
+    daily_breakdown: List[Mapping],
+    recruiter_activity_details: List[Mapping],
+    login_logs: List[Mapping],
+    charts: Mapping[str, List[Mapping]],
+    generated_by: str = "",
+    date_range: Tuple[date, date] = (None, None),
+) -> bytes:
+    """
+    Export individual recruiter performance report to PDF.
+    """
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    c.setTitle(title)
+
+    # IST Conversion
+    utc_now = datetime.utcnow()
+    ist_now = utc_now + timedelta(hours=5, minutes=30)
+    date_str = ist_now.strftime('%d-%b-%Y %I:%M %p IST')
+    
+    subtitle = f"Generated: {date_str}"
+    
+    # Date Range sub-text
+    d_start, d_end = date_range
+    if d_start and d_end:
+        range_str = f"{d_start.strftime('%d %b %Y')} - {d_end.strftime('%d %b %Y')}"
+    else:
+        range_str = "All Time"
+        
+    subtitle += f" | Range: {range_str}"
+    
+    if generated_by:
+        subtitle += f" | By: {generated_by}"
+
+    _draw_header_footer(c, title, subtitle)
+    y = height - 110
+    margin = 40
+
+    # Recruiter metadata - Truncate long names to prevent header overflow
+    recruiter_name = recruiter_metadata.get("recruiter_name", "N/A")
+    # Truncate if too long (max 50 chars to fit on page)
+    if len(recruiter_name) > 50:
+        recruiter_name = recruiter_name[:47] + "..."
+    c.setFont("Helvetica-Bold", 14)
+    c.setFillColor(colors.HexColor("#0f172a"))
+    c.drawString(margin, y, f"Recruiter: {recruiter_name}")
+    y -= 30
+
+    # Summary tiles
+    y = _draw_tiles(c, summary_tiles, y)
+    y -= 20
+
+    # Daily Status Chart
+    daily_status_trends = charts.get("daily_status_trends", [])
+    if daily_status_trends:
+        if y < 300:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Daily Status")
+        y -= 20
+        
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        dates_raw = [item.get("date", "") for item in daily_status_trends]
+        sourced = [item.get("sourced", 0) for item in daily_status_trends]
+        screened = [item.get("screened", 0) for item in daily_status_trends]
+        lined_up = [item.get("lined_up", 0) for item in daily_status_trends]
+        turned_up = [item.get("turned_up", 0) for item in daily_status_trends]
+        offer_accepted = [item.get("offer_accepted", 0) for item in daily_status_trends]
+        
+        # Determine group type from date range
+        d_start, d_end = date_range
+        total_days = 365
+        group_type = "daily"
+        if d_start and d_end:
+            total_days = (d_end - d_start).days + 1
+            if total_days == 1:
+                group_type = "hourly"
+            elif total_days <= 30:
+                group_type = "daily"
+            elif total_days <= 365:
+                group_type = "weekly"
+            else:
+                group_type = "monthly"
+        
+        # Format labels based on group type
+        date_labels = []
+        for d_str in dates_raw:
+            if group_type == "hourly":
+                date_labels.append(str(d_str))
+            elif group_type == "daily":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            elif group_type == "weekly":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d_str.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            else:  # monthly
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%b-%Y'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d.strftime('%b-%Y'))
+                    else:
+                        date_labels.append(str(d_str)[:7])
+                except:
+                    date_labels.append(str(d_str)[:7])
+        
+        x_positions = range(len(dates_raw))
+        
+        ax.plot(x_positions, sourced, marker='o', label='Sourced', linewidth=2, markersize=4)
+        ax.plot(x_positions, screened, marker='s', label='Screened', linewidth=2, markersize=4)
+        ax.plot(x_positions, lined_up, marker='^', label='Lined Up', linewidth=2, markersize=4)
+        ax.plot(x_positions, turned_up, marker='v', label='Turned Up', linewidth=2, markersize=4)
+        ax.plot(x_positions, offer_accepted, marker='d', label='Offer Accepted', linewidth=2, markersize=4)
+        
+        ax.set_xlabel('Date' if group_type != "hourly" else 'Hour', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Daily Status', fontsize=12, fontweight='bold')
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Set X-axis labels with dynamic formatting (max 15 labels)
+        rotation = 45 if len(date_labels) > 10 else (45 if group_type == "hourly" and len(date_labels) > 12 else 0)
+        if len(date_labels) > 15:
+            step = max(1, len(date_labels) // 15)
+            ax.set_xticks(x_positions[::step])
+            ax.set_xticklabels(date_labels[::step], rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        else:
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels(date_labels, rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
+
+    # Page 2: Daily Joined vs Rejected and Jobs Performance Charts
+    daily_joined_rejected = charts.get("daily_joined_rejected", [])
+    jobs_performance = charts.get("jobs_performance", [])
+    
+    # Check if we have actual data
+    has_page2_charts = (daily_joined_rejected and len(daily_joined_rejected) > 0) or \
+                       (jobs_performance and len(jobs_performance) > 0)
+    
+    if has_page2_charts:
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        y = height - 110
+    
+    # Daily Joined vs Rejected Chart
+    if daily_joined_rejected and len(daily_joined_rejected) > 0:
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Daily Joined vs Rejected")
+        y -= 20
+        
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        dates_raw = [item.get("date", "") for item in daily_joined_rejected]
+        joined = [item.get("joined", 0) for item in daily_joined_rejected]
+        rejected = [item.get("rejected", 0) for item in daily_joined_rejected]
+        
+        # Determine group type from date range
+        d_start, d_end = date_range
+        total_days = 365
+        group_type = "daily"
+        if d_start and d_end:
+            total_days = (d_end - d_start).days + 1
+            if total_days == 1:
+                group_type = "hourly"
+            elif total_days <= 30:
+                group_type = "daily"
+            elif total_days <= 365:
+                group_type = "weekly"
+            else:
+                group_type = "monthly"
+        
+        # Format labels based on group type
+        date_labels = []
+        for d_str in dates_raw:
+            if group_type == "hourly":
+                date_labels.append(str(d_str))
+            elif group_type == "daily":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            elif group_type == "weekly":
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%d-%m'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d.strftime('%d-%m'))
+                    else:
+                        date_labels.append(str(d_str)[:5])
+                except:
+                    date_labels.append(str(d_str)[:5])
+            else:  # monthly
+                try:
+                    if isinstance(d_str, str):
+                        d = pd.to_datetime(d_str).date()
+                        date_labels.append(d.strftime('%b-%Y'))
+                    elif isinstance(d_str, date):
+                        date_labels.append(d.strftime('%b-%Y'))
+                    else:
+                        date_labels.append(str(d_str)[:7])
+                except:
+                    date_labels.append(str(d_str)[:7])
+        
+        x_pos = range(len(dates_raw))
+        width_bar = 0.35
+        
+        ax.bar([x - width_bar/2 for x in x_pos], joined, width_bar, label='Joined', color='#10b981')
+        ax.bar([x + width_bar/2 for x in x_pos], rejected, width_bar, label='Rejected', color='#ef4444')
+        
+        ax.set_xlabel('Date' if group_type != "hourly" else 'Hour', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Daily Joined vs Rejected', fontsize=12, fontweight='bold')
+        
+        # Set X-axis labels with dynamic formatting (max 15 labels)
+        rotation = 45 if len(date_labels) > 10 else (45 if group_type == "hourly" and len(date_labels) > 12 else 0)
+        if len(date_labels) > 15:
+            step = max(1, len(date_labels) // 15)
+            ax.set_xticks(x_pos[::step])
+            ax.set_xticklabels(date_labels[::step], rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        else:
+            ax.set_xticks(x_pos)
+            ax.set_xticklabels(date_labels, rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
+    
+    # Jobs Performance Chart
+    if jobs_performance and len(jobs_performance) > 0:
+        # Add vertical separation
+        y -= 30
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Jobs Performance")
+        y -= 20
+        
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        jobs_full = [item.get("job_title", "") for item in jobs_performance]
+        num_jobs = len(jobs_full)
+        if num_jobs <= 5:
+            max_len = 25
+        elif num_jobs <= 10:
+            max_len = 20
+        else:
+            max_len = 15
+        
+        jobs = [name[:max_len] + "..." if len(name) > max_len else name for name in jobs_full]
+        candidates = [item.get("candidates", 0) for item in jobs_performance]
+        joined = [item.get("joined", 0) for item in jobs_performance]
+        
+        x_pos = range(len(jobs))
+        width_bar = 0.35
+        
+        ax.bar([x - width_bar/2 for x in x_pos], candidates, width_bar, label='Candidates', color='#2563eb')
+        ax.bar([x + width_bar/2 for x in x_pos], joined, width_bar, label='Joined', color='#10b981')
+        
+        ax.set_xlabel('Job', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Jobs Performance', fontsize=12, fontweight='bold')
+        ax.set_xticks(x_pos)
+        
+        # Dynamic rotation and spacing for job titles
+        if num_jobs > 8:
+            step = max(1, num_jobs // 15) if num_jobs > 15 else 1
+            ax.set_xticks(x_pos[::step])
+            ax.set_xticklabels(jobs[::step], rotation=45, ha='right', fontsize=8)
+        elif num_jobs > 5:
+            ax.set_xticklabels(jobs, rotation=45, ha='right', fontsize=8)
+        else:
+            ax.set_xticklabels(jobs, rotation=0, ha='center', fontsize=9)
+        
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
+
+    # Jobs Assigned Table - Start on page 3
+    if jobs_assigned and len(jobs_assigned) > 0:
+        c.showPage()
+        _draw_header_footer(c, title, subtitle)
+        y = height - 110
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Jobs Assigned")
+        y -= 20
+        
+        # Table headers
+        headers = ["Job Title", "Candidates", "Joined"]
+        col_widths = [300, 100, 100]
+        
+        c.setFont("Helvetica-Bold", 8)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        x = margin
+        for i, header in enumerate(headers):
+            c.drawString(x, y, header[:20])
+            x += col_widths[i]
+        y -= 15
+        
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.line(margin, y, width - margin, y)
+        y -= 10
+        
+        # Table rows - Show ALL data (no truncation)
+        c.setFont("Helvetica", 7)
+        c.setFillColor(colors.black)
+        for row in jobs_assigned:
+            if y < 60:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                # Redraw headers
+                c.setFont("Helvetica-Bold", 8)
+                c.setFillColor(colors.HexColor("#0f172a"))
+                x = margin
+                for i, header in enumerate(headers):
+                    c.drawString(x, y, header[:20])
+                    x += col_widths[i]
+                y -= 15
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(margin, y, width - margin, y)
+                y -= 10
+                c.setFont("Helvetica", 7)
+                c.setFillColor(colors.black)
+            
+            x = margin
+            job_title = str(row.get("job_title", ""))[:35]
+            c.drawString(x, y, job_title)
+            x += col_widths[0]
+            c.drawString(x, y, str(row.get("candidates", 0)))
+            x += col_widths[1]
+            c.drawString(x, y, str(row.get("joined", 0)))
+            y -= 12
+
+    # Recruiter Activity Details Table
+    if recruiter_activity_details and len(recruiter_activity_details) > 0:
+        # Add vertical separation
+        y -= 40
+        if y < 200:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Recruiter Activity Details")
+        y -= 20
+        
+        # Table headers
+        headers = ["Activity Type", "Candidate Name", "Remarks", "Date & Time (IST)"]
+        col_widths = [100, 120, 200, 120]
+        
+        c.setFont("Helvetica-Bold", 8)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        x = margin
+        for i, header in enumerate(headers):
+            c.drawString(x, y, header[:18])
+            x += col_widths[i]
+        y -= 15
+        
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.line(margin, y, width - margin, y)
+        y -= 10
+        
+        # Table rows - Show ALL data (no truncation)
+        c.setFont("Helvetica", 7)
+        c.setFillColor(colors.black)
+        for row in recruiter_activity_details:
+            if y < 60:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                # Redraw headers
+                c.setFont("Helvetica-Bold", 8)
+                c.setFillColor(colors.HexColor("#0f172a"))
+                x = margin
+                for i, header in enumerate(headers):
+                    c.drawString(x, y, header[:18])
+                    x += col_widths[i]
+                y -= 15
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(margin, y, width - margin, y)
+                y -= 10
+                c.setFont("Helvetica", 7)
+                c.setFillColor(colors.black)
+            
+            x = margin
+            activity_type = str(row.get("activity_type", ""))[:18]
+            c.drawString(x, y, activity_type)
+            x += col_widths[0]
+            candidate_name = str(row.get("candidate_name", "N/A"))[:20]
+            c.drawString(x, y, candidate_name)
+            x += col_widths[1]
+            remarks = str(row.get("remarks", ""))[:35]
+            c.drawString(x, y, remarks)
+            x += col_widths[2]
+            created_at = str(row.get("created_at", "N/A"))[:18]
+            c.drawString(x, y, created_at)
+            y -= 12
+
+    # Login Logs Table
+    if login_logs and len(login_logs) > 0:
+        # Add vertical separation
+        y -= 40
+        if y < 200:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Login Logs")
+        y -= 20
+        
+        # Table headers
+        headers = ["Session ID", "Login At (IST)", "Status"]
+        col_widths = [200, 150, 80]
+        
+        c.setFont("Helvetica-Bold", 8)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        x = margin
+        for i, header in enumerate(headers):
+            c.drawString(x, y, header[:20])
+            x += col_widths[i]
+        y -= 15
+        
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.line(margin, y, width - margin, y)
+        y -= 10
+        
+        # Table rows - Show ALL data (no truncation)
+        c.setFont("Helvetica", 7)
+        c.setFillColor(colors.black)
+        for row in login_logs:
+            if y < 60:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                # Redraw headers
+                c.setFont("Helvetica-Bold", 8)
+                c.setFillColor(colors.HexColor("#0f172a"))
+                x = margin
+                for i, header in enumerate(headers):
+                    c.drawString(x, y, header[:20])
+                    x += col_widths[i]
+                y -= 15
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(margin, y, width - margin, y)
+                y -= 10
+                c.setFont("Helvetica", 7)
+                c.setFillColor(colors.black)
+            
+            x = margin
+            session_id = str(row.get("session_id", ""))[:30]
+            c.drawString(x, y, session_id)
+            x += col_widths[0]
+            login_at = str(row.get("login_at", "N/A"))[:20]
+            c.drawString(x, y, login_at)
+            x += col_widths[1]
+            status = "Active" if row.get("is_active", False) else "Inactive"
+            c.drawString(x, y, status)
+            y -= 12
+
+    c.showPage()
+    _draw_header_footer(c, title, subtitle)
+    c.setFont("Helvetica", 10)
+    c.setFillColor(colors.HexColor("#666666"))
+    c.drawCentredString(width/2, height/2, "END OF REPORT")
+
+    c.save()
+    return buffer.getvalue()
+
+
 def export_with_format(
     fmt: str,
     title: str,
