@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Mapping
 
-from sqlalchemy import func, and_
+from sqlalchemy import func, and_, cast, String, literal_column
 from sqlalchemy.orm import Session
 
 from app.database_layer.db_model import (
@@ -956,6 +956,15 @@ def build_job_details_report(db: Session, job_id: int, filters: ReportFilter) ->
             active_from_activity = activity_query.distinct().all()
             active_user_ids.update(row[0] for row in active_from_activity)
 
+    # Calculate completed clawback count per recruiter
+    today = date.today()
+    completed_clawback_per_recruiter = {}
+    if clawback_metrics and clawback_metrics.get("all_cases"):
+        for case in clawback_metrics["all_cases"]:
+            recruiter_id = case.get("recruiter_id")
+            if recruiter_id and case.get("completion_date") and case["completion_date"] <= today:
+                completed_clawback_per_recruiter[recruiter_id] = completed_clawback_per_recruiter.get(recruiter_id, 0) + 1
+    
     # Build recruiter ranking with all assigned recruiters
     recruiter_assignments = []
     for rid in all_assigned_recruiter_ids:
@@ -963,6 +972,7 @@ def build_job_details_report(db: Session, job_id: int, filters: ReportFilter) ->
         user = db.query(User).filter(User.id == rid).first()
         recruiter_name = user.name if user else f"User {rid}"
         is_active = rid in active_user_ids
+        completed_clawback = completed_clawback_per_recruiter.get(rid, 0)
         
         recruiter_assignments.append({
             "recruiter_id": rid,
@@ -972,12 +982,13 @@ def build_job_details_report(db: Session, job_id: int, filters: ReportFilter) ->
             "rejected": stats["rejected"],
             "active": is_active,
             "activity_count": activity_counts.get(rid, 0),
+            "completed_clawback": completed_clawback,
         })
     
-    # Rank by: 1) max joined, 2) highest activity, 3) highest candidates
+    # Rank by: 1) max(joined, completed_clawback), 2) highest activity, 3) highest candidates
     best_hr = sorted(
         recruiter_assignments,
-        key=lambda x: (x.get("joined", 0), x.get("activity_count", 0), x.get("candidates", 0)),
+        key=lambda x: (max(x.get("joined", 0), x.get("completed_clawback", 0)), x.get("activity_count", 0), x.get("candidates", 0)),
         reverse=True
     )
 
@@ -1318,7 +1329,11 @@ def build_job_daily_report(db: Session, job_id: int, from_date: date, to_date: d
             .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
             .join(
                 PipelineStageStatus,
-                CandidateActivity.remark == PipelineStageStatus.option
+                and_(
+                    CandidateActivity.remark.isnot(None),
+                    PipelineStageStatus.option.isnot(None),
+                    func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                )
             )
             .filter(
                 CandidateJobs.job_id == job_id,
@@ -1326,7 +1341,7 @@ def build_job_daily_report(db: Session, job_id: int, from_date: date, to_date: d
                 CandidateActivity.type == CandidateActivityType.status,
                 CandidateActivity.created_at >= date_start,
                 CandidateActivity.created_at < date_end,
-                PipelineStageStatus.tag == tag
+                cast(PipelineStageStatus.tag, String) == tag.value
             )
             .scalar()
         )
@@ -1939,12 +1954,17 @@ def build_job_daily_report(db: Session, job_id: int, from_date: date, to_date: d
             return 0
         
         # Filter by user_id who created the activity (like tiles logic)
+        # Use trimmed matching for remark/option to handle any whitespace issues
         count_query = (
             db.query(func.count(func.distinct(CandidateActivity.candidate_id)))
             .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
             .join(
                 PipelineStageStatus,
-                CandidateActivity.remark == PipelineStageStatus.option
+                and_(
+                    CandidateActivity.remark.isnot(None),
+                    PipelineStageStatus.option.isnot(None),
+                    func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                )
             )
         .filter(
             CandidateJobs.job_id == job_id,
@@ -1953,7 +1973,7 @@ def build_job_daily_report(db: Session, job_id: int, from_date: date, to_date: d
                 CandidateActivity.user_id == recruiter_id,  # Filter by user_id who created the activity
                 CandidateActivity.created_at >= date_start,
                 CandidateActivity.created_at < date_end,
-                PipelineStageStatus.tag == tag
+                cast(PipelineStageStatus.tag, String) == tag.value
             )
         )
         
@@ -1967,16 +1987,21 @@ def build_job_daily_report(db: Session, job_id: int, from_date: date, to_date: d
             return []
         
         # Get candidate activities with this tag on the specific day, filtered by user_id who created the activity
+        # Use case-insensitive and trimmed matching for remark/option to handle any whitespace or case issues
         activities = (
             db.query(
                 CandidateActivity.candidate_id,
-                CandidateActivity.created_at,
+                func.max(CandidateActivity.created_at).label('created_at'),
                 CandidateActivity.user_id
             )
             .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
             .join(
                 PipelineStageStatus,
-                CandidateActivity.remark == PipelineStageStatus.option
+                and_(
+                    CandidateActivity.remark.isnot(None),
+                    PipelineStageStatus.option.isnot(None),
+                    func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                )
             )
             .filter(
                 CandidateJobs.job_id == job_id,
@@ -1985,9 +2010,9 @@ def build_job_daily_report(db: Session, job_id: int, from_date: date, to_date: d
                 CandidateActivity.user_id == recruiter_id,  # Filter by user_id who created the activity
                 CandidateActivity.created_at >= date_start,
                 CandidateActivity.created_at < date_end,
-                PipelineStageStatus.tag == tag
-        )
-        .distinct()
+                cast(PipelineStageStatus.tag, String) == tag.value
+            )
+            .group_by(CandidateActivity.candidate_id, CandidateActivity.user_id)
         .all()
     )
         
@@ -2051,6 +2076,13 @@ def build_job_daily_report(db: Session, job_id: int, from_date: date, to_date: d
         tag_based_candidates_daily["turned_up"].extend(turned_up_candidates)
         tag_based_candidates_daily["offer_accepted"].extend(offer_accepted_candidates)
         
+        # Calculate completed clawback count for this recruiter (for the date range)
+        completed_clawback = 0
+        if clawback_metrics and clawback_metrics.get("all_cases"):
+            for case in clawback_metrics["all_cases"]:
+                if case.get("recruiter_id") == rid and case.get("completion_date") and case["completion_date"] <= to_date:
+                    completed_clawback += 1
+        
         recruiter_assignments.append({
             "recruiter_id": rid,
             "recruiter_name": recruiter_name,
@@ -2064,12 +2096,13 @@ def build_job_daily_report(db: Session, job_id: int, from_date: date, to_date: d
             "lined_up": lined_up_count,
             "turned_up": turned_up_count,
             "offer_accepted": offer_accepted_count,
+            "completed_clawback": completed_clawback,
         })
     
-    # Rank by: 1) max joined, 2) highest activity, 3) highest candidates
+    # Rank by: 1) max(joined, completed_clawback), 2) highest activity, 3) highest candidates
     best_hr = sorted(
         recruiter_assignments,
-        key=lambda x: (x.get("joined", 0), x.get("activity_count", 0), x.get("candidates", 0)),
+        key=lambda x: (max(x.get("joined", 0), x.get("completed_clawback", 0)), x.get("activity_count", 0), x.get("candidates", 0)),
         reverse=True
     )
 
@@ -2399,3 +2432,909 @@ def build_job_daily_report(db: Session, job_id: int, from_date: date, to_date: d
         },
     }
 
+
+
+def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Dict[str, Mapping]:
+    """
+    Build a summary report for all jobs with tag-based statuses, company details, and daily breakdowns.
+    Shows aggregated data across all jobs for the specified date range.
+    """
+    def to_ist(dt_val):
+        if not dt_val:
+            return None
+        ist_delta = timedelta(hours=5, minutes=30)
+        if isinstance(dt_val, datetime):
+            return dt_val + ist_delta
+        if isinstance(dt_val, date):
+            return datetime.combine(dt_val, datetime.min.time()) + ist_delta
+        return dt_val
+
+    # Calculate date range
+    date_start = datetime.combine(from_date, datetime.min.time())
+    date_end = datetime.combine(to_date, datetime.min.time()) + timedelta(days=1)
+    
+    # Determine if it's a daily report
+    is_daily = (from_date == to_date)
+    date_range_days = (to_date - from_date).days + 1
+
+    # Get all jobs (not just active) to calculate status breakdowns
+    all_jobs = db.query(JobOpenings).all()
+    # Filter active jobs for the main report
+    jobs = [j for j in all_jobs if j.status == "ACTIVE"]
+    job_ids = [j.id for j in jobs]
+    
+    # Calculate job status counts (excluding PENDING)
+    total_jobs_all = len([j for j in all_jobs if j.status and j.status.upper() != "PENDING"])
+    total_active_jobs = len([j for j in all_jobs if j.status and j.status.upper() == "ACTIVE"])
+    total_inactive_jobs = len([j for j in all_jobs if j.status and j.status.upper() == "INACTIVE"])
+    total_closed_jobs = len([j for j in all_jobs if j.status and j.status.upper() == "CLOSED"])
+    
+    if not job_ids:
+        return {
+            "summary_tiles": [],
+            "jobs_summary": [],
+            "company_summary": [],
+            "daily_breakdown": [],
+            "charts": {},
+            "date_range": {
+                "from_date": from_date.isoformat(),
+                "to_date": to_date.isoformat(),
+                "is_daily": is_daily,
+                "date_range_days": date_range_days
+            }
+        }
+
+    # Get company details
+    company_ids = list(set([j.company_id for j in jobs if j.company_id]))
+    companies = {}
+    if company_ids:
+        company_rows = db.query(Company.id, Company.company_name, Company.location).filter(Company.id.in_(company_ids)).all()
+        companies = {cid: {"name": cname, "location": cloc} for cid, cname, cloc in company_rows}
+
+    # Get all candidate jobs for these jobs
+    candidate_jobs = db.query(CandidateJobs).filter(CandidateJobs.job_id.in_(job_ids)).all()
+    candidate_job_ids = [cj.id for cj in candidate_jobs]
+    candidate_ids = [cj.candidate_id for cj in candidate_jobs]
+    
+    # Map candidate_id to job_id
+    candidate_to_job = {cj.candidate_id: cj.job_id for cj in candidate_jobs}
+
+    # Helper function to get tag count for a specific job
+    def get_tag_count_for_job(job_id: int, tag: PipelineStageStatusTag) -> int:
+        job_candidate_ids = [cid for cid, jid in candidate_to_job.items() if jid == job_id]
+        if not job_candidate_ids:
+            return 0
+        
+        count = (
+            db.query(func.count(func.distinct(CandidateActivity.candidate_id)))
+            .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
+            .join(
+                PipelineStageStatus,
+                and_(
+                    CandidateActivity.remark.isnot(None),
+                    PipelineStageStatus.option.isnot(None),
+                    func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                )
+            )
+            .filter(
+                CandidateJobs.job_id == job_id,
+                CandidateActivity.candidate_id.in_(job_candidate_ids),
+                CandidateActivity.type == CandidateActivityType.status,
+                CandidateActivity.created_at >= date_start,
+                CandidateActivity.created_at < date_end,
+                cast(PipelineStageStatus.tag, String) == tag.value
+            )
+            .scalar()
+        )
+        return count or 0
+
+    # Get joined and rejected counts per job (for the date range)
+    joined_counts = {}
+    rejected_counts = {}
+    if candidate_job_ids:
+        joined_data = (
+            db.query(CandidateJobs.job_id, func.count(CandidateJobStatus.id))
+            .join(CandidateJobStatus, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type == CandidateJobStatusType.joined,
+                CandidateJobStatus.joined_at.isnot(None),
+                CandidateJobStatus.joined_at >= date_start,
+                CandidateJobStatus.joined_at < date_end
+            )
+            .group_by(CandidateJobs.job_id)
+            .all()
+        )
+        joined_counts = {jid: count for jid, count in joined_data}
+        
+        rejected_data = (
+            db.query(CandidateJobs.job_id, func.count(CandidateJobStatus.id))
+            .join(CandidateJobStatus, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type.in_([CandidateJobStatusType.rejected, CandidateJobStatusType.dropped]),
+                CandidateJobStatus.rejected_at.isnot(None),
+                CandidateJobStatus.rejected_at >= date_start,
+                CandidateJobStatus.rejected_at < date_end
+            )
+            .group_by(CandidateJobs.job_id)
+            .all()
+        )
+        rejected_counts = {jid: count for jid, count in rejected_data}
+
+    # Build jobs summary (only active jobs)
+    jobs_summary = []
+    for job in jobs:
+        company_info = companies.get(job.company_id, {"name": f"Company {job.company_id}", "location": ""})
+        
+        # Get tag counts for this job
+        sourced = get_tag_count_for_job(job.id, PipelineStageStatusTag.SOURCING)
+        screened = get_tag_count_for_job(job.id, PipelineStageStatusTag.SCREENING)
+        lined_up = get_tag_count_for_job(job.id, PipelineStageStatusTag.LINE_UPS)
+        turned_up = get_tag_count_for_job(job.id, PipelineStageStatusTag.TURN_UPS)
+        offer_accepted = get_tag_count_for_job(job.id, PipelineStageStatusTag.OFFER_ACCEPTED)
+        
+        # Calculate total activity for this job (sum of all tag counts + joined + rejected)
+        total_activity = sourced + screened + lined_up + turned_up + offer_accepted + joined_counts.get(job.id, 0) + rejected_counts.get(job.id, 0)
+        
+        jobs_summary.append({
+            "job_id": job.id,
+            "job_public_id": job.job_id,
+            "job_title": job.title,
+            "company_id": job.company_id,
+            "company_name": company_info["name"],
+            "company_location": company_info.get("location", ""),
+            "openings": job.openings or 0,
+            "deadline": job.deadline.strftime("%Y-%m-%d") if job.deadline else None,
+            "days_remaining": max((job.deadline - date.today()).days, 0) if job.deadline else None,
+            "status": job.status,
+            "sourced": sourced,
+            "screened": screened,
+            "lined_up": lined_up,
+            "turned_up": turned_up,
+            "offer_accepted": offer_accepted,
+            "joined": joined_counts.get(job.id, 0),
+            "rejected": rejected_counts.get(job.id, 0),
+            "total_activity": total_activity,  # For sorting
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+        })
+    
+    # Sort jobs by most activity (total_activity descending)
+    jobs_summary.sort(key=lambda x: x["total_activity"], reverse=True)
+
+    # Build company summary (aggregate by company)
+    company_summary_dict = {}
+    for job_summary in jobs_summary:
+        company_id = job_summary["company_id"]
+        if company_id not in company_summary_dict:
+            company_summary_dict[company_id] = {
+                "company_id": company_id,
+                "company_name": job_summary["company_name"],
+                "company_location": job_summary["company_location"],
+                "total_jobs": 0,
+                "total_openings": 0,
+                "total_sourced": 0,
+                "total_screened": 0,
+                "total_lined_up": 0,
+                "total_turned_up": 0,
+                "total_offer_accepted": 0,
+                "total_joined": 0,
+                "total_rejected": 0,
+            }
+        
+        comp = company_summary_dict[company_id]
+        comp["total_jobs"] += 1
+        comp["total_openings"] += job_summary["openings"]
+        comp["total_sourced"] += job_summary["sourced"]
+        comp["total_screened"] += job_summary["screened"]
+        comp["total_lined_up"] += job_summary["lined_up"]
+        comp["total_turned_up"] += job_summary["turned_up"]
+        comp["total_offer_accepted"] += job_summary["offer_accepted"]
+        comp["total_joined"] += job_summary["joined"]
+        comp["total_rejected"] += job_summary["rejected"]
+    
+    company_summary = list(company_summary_dict.values())
+    # Sort by total activity (sum of all metrics)
+    for comp in company_summary:
+        comp["total_activity"] = (
+            comp["total_sourced"] + comp["total_screened"] + comp["total_lined_up"] +
+            comp["total_turned_up"] + comp["total_offer_accepted"] + comp["total_joined"] + comp["total_rejected"]
+        )
+    company_summary.sort(key=lambda x: x["total_activity"], reverse=True)
+
+    # Build breakdown (hourly for 1 day, daily for <=30 days, weekly for >30 days, monthly for >365 days)
+    # Determine grouping type
+    if date_range_days == 1:
+        group_type = "hourly"
+    elif date_range_days <= 30:
+        group_type = "daily"
+    elif date_range_days <= 365:
+        group_type = "weekly"
+    else:
+        group_type = "monthly"
+    
+    daily_breakdown_dict = {}
+    
+    if group_type == "hourly":
+        # Hourly breakdown for single day
+        for hour in range(24):
+            hour_key = f"{hour:02d}:00"
+            daily_breakdown_dict[hour_key] = {
+                "date": hour_key,
+                "sourced": 0,
+                "screened": 0,
+                "lined_up": 0,
+                "turned_up": 0,
+                "offer_accepted": 0,
+                "joined": 0,
+                "rejected": 0,
+            }
+    else:
+        # Daily/weekly/monthly breakdown
+        current = from_date
+        while current <= to_date:
+            if group_type == "daily":
+                key = current.isoformat()
+            elif group_type == "weekly":
+                # Get week start (Monday)
+                days_since_monday = current.weekday()
+                week_start = current - timedelta(days=days_since_monday)
+                key = week_start.isoformat()
+            else:  # monthly
+                key = current.replace(day=1).isoformat()
+            
+            if key not in daily_breakdown_dict:
+                daily_breakdown_dict[key] = {
+                    "date": key,
+                    "sourced": 0,
+                    "screened": 0,
+                    "lined_up": 0,
+                    "turned_up": 0,
+                    "offer_accepted": 0,
+                    "joined": 0,
+                    "rejected": 0,
+                }
+            current += timedelta(days=1)
+    
+    # Get tag breakdowns based on group type
+    for tag, tag_key in [
+        (PipelineStageStatusTag.SOURCING, "sourced"),
+        (PipelineStageStatusTag.SCREENING, "screened"),
+        (PipelineStageStatusTag.LINE_UPS, "lined_up"),
+        (PipelineStageStatusTag.TURN_UPS, "turned_up"),
+        (PipelineStageStatusTag.OFFER_ACCEPTED, "offer_accepted"),
+    ]:
+        if group_type == "hourly":
+            # Group by hour
+            tag_data = (
+                db.query(
+                    func.extract('hour', CandidateActivity.created_at).label('activity_hour'),
+                    func.count(func.distinct(CandidateActivity.candidate_id)).label('count')
+                )
+                .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
+                .join(
+                    PipelineStageStatus,
+                    and_(
+                        CandidateActivity.remark.isnot(None),
+                        PipelineStageStatus.option.isnot(None),
+                        func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                    )
+                )
+                .filter(
+                    CandidateJobs.job_id.in_(job_ids),
+                    CandidateActivity.candidate_id.in_(candidate_ids),
+                    CandidateActivity.type == CandidateActivityType.status,
+                    CandidateActivity.created_at >= date_start,
+                    CandidateActivity.created_at < date_end,
+                    cast(PipelineStageStatus.tag, String) == tag.value
+                )
+                .group_by(func.extract('hour', CandidateActivity.created_at))
+                .all()
+            )
+            for hour, count in tag_data:
+                hour_key = f"{int(hour):02d}:00"
+                if hour_key in daily_breakdown_dict:
+                    daily_breakdown_dict[hour_key][tag_key] = count
+        elif group_type == "daily":
+            # Group by date
+            tag_data = (
+                db.query(
+                    func.date(CandidateActivity.created_at).label('activity_date'),
+                    func.count(func.distinct(CandidateActivity.candidate_id)).label('count')
+                )
+                .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
+                .join(
+                    PipelineStageStatus,
+                    and_(
+                        CandidateActivity.remark.isnot(None),
+                        PipelineStageStatus.option.isnot(None),
+                        func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                    )
+                )
+                .filter(
+                    CandidateJobs.job_id.in_(job_ids),
+                    CandidateActivity.candidate_id.in_(candidate_ids),
+                    CandidateActivity.type == CandidateActivityType.status,
+                    CandidateActivity.created_at >= date_start,
+                    CandidateActivity.created_at < date_end,
+                    cast(PipelineStageStatus.tag, String) == tag.value
+                )
+                .group_by(func.date(CandidateActivity.created_at))
+                .all()
+            )
+            for day, count in tag_data:
+                day_date = day.date() if isinstance(day, datetime) else day
+                day_key = day_date.isoformat()
+                if day_key in daily_breakdown_dict:
+                    daily_breakdown_dict[day_key][tag_key] = count
+        elif group_type == "weekly":
+            # Group by week (Monday as week start) - MySQL compatible
+            # DATE_SUB(date, INTERVAL WEEKDAY(date) DAY) gets Monday of the week
+            week_start_expr = literal_column("DATE_SUB(DATE(candidate_activity.created_at), INTERVAL WEEKDAY(candidate_activity.created_at) DAY)")
+            tag_data = (
+                db.query(
+                    func.date(week_start_expr).label('activity_week'),
+                    func.count(func.distinct(CandidateActivity.candidate_id)).label('count')
+                )
+                .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
+                .join(
+                    PipelineStageStatus,
+                    and_(
+                        CandidateActivity.remark.isnot(None),
+                        PipelineStageStatus.option.isnot(None),
+                        func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                    )
+                )
+                .filter(
+                    CandidateJobs.job_id.in_(job_ids),
+                    CandidateActivity.candidate_id.in_(candidate_ids),
+                    CandidateActivity.type == CandidateActivityType.status,
+                    CandidateActivity.created_at >= date_start,
+                    CandidateActivity.created_at < date_end,
+                    cast(PipelineStageStatus.tag, String) == tag.value
+                )
+                .group_by(func.date(week_start_expr))
+                .all()
+            )
+            for week, count in tag_data:
+                week_date = week.date() if isinstance(week, datetime) else week
+                week_key = week_date.isoformat()
+                if week_key in daily_breakdown_dict:
+                    daily_breakdown_dict[week_key][tag_key] = count
+        else:  # monthly
+            # Group by month - MySQL compatible
+            # DATE_SUB(date, INTERVAL DAY(date)-1 DAY) gets first day of month
+            month_start_expr = literal_column("DATE_SUB(DATE(candidate_activity.created_at), INTERVAL DAY(candidate_activity.created_at)-1 DAY)")
+            tag_data = (
+                db.query(
+                    func.date(month_start_expr).label('activity_month'),
+                    func.count(func.distinct(CandidateActivity.candidate_id)).label('count')
+                )
+                .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
+                .join(
+                    PipelineStageStatus,
+                    and_(
+                        CandidateActivity.remark.isnot(None),
+                        PipelineStageStatus.option.isnot(None),
+                        func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                    )
+                )
+                .filter(
+                    CandidateJobs.job_id.in_(job_ids),
+                    CandidateActivity.candidate_id.in_(candidate_ids),
+                    CandidateActivity.type == CandidateActivityType.status,
+                    CandidateActivity.created_at >= date_start,
+                    CandidateActivity.created_at < date_end,
+                    cast(PipelineStageStatus.tag, String) == tag.value
+                )
+                .group_by(func.date(month_start_expr))
+                .all()
+            )
+            for month, count in tag_data:
+                month_date = month.date() if isinstance(month, datetime) else month
+                month_key = month_date.replace(day=1).isoformat()
+                if month_key in daily_breakdown_dict:
+                    daily_breakdown_dict[month_key][tag_key] = count
+    
+    # Get joined/rejected breakdowns based on group type
+    if group_type == "hourly":
+        # Group by hour
+        joined_data = (
+            db.query(
+                func.extract('hour', CandidateJobStatus.joined_at).label('joined_hour'),
+                func.count(CandidateJobStatus.id).label('count')
+            )
+            .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type == CandidateJobStatusType.joined,
+                CandidateJobStatus.joined_at.isnot(None),
+                CandidateJobStatus.joined_at >= date_start,
+                CandidateJobStatus.joined_at < date_end
+            )
+            .group_by(func.extract('hour', CandidateJobStatus.joined_at))
+            .all()
+        )
+        for hour, count in joined_data:
+            hour_key = f"{int(hour):02d}:00"
+            if hour_key in daily_breakdown_dict:
+                daily_breakdown_dict[hour_key]["joined"] = count
+        
+        rejected_data = (
+            db.query(
+                func.extract('hour', CandidateJobStatus.rejected_at).label('rejected_hour'),
+                func.count(CandidateJobStatus.id).label('count')
+            )
+            .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type.in_([CandidateJobStatusType.rejected, CandidateJobStatusType.dropped]),
+                CandidateJobStatus.rejected_at.isnot(None),
+                CandidateJobStatus.rejected_at >= date_start,
+                CandidateJobStatus.rejected_at < date_end
+            )
+            .group_by(func.extract('hour', CandidateJobStatus.rejected_at))
+            .all()
+        )
+        for hour, count in rejected_data:
+            hour_key = f"{int(hour):02d}:00"
+            if hour_key in daily_breakdown_dict:
+                daily_breakdown_dict[hour_key]["rejected"] = count
+    elif group_type == "daily":
+        # Group by date
+        joined_data = (
+            db.query(
+                func.date(CandidateJobStatus.joined_at).label('joined_date'),
+                func.count(CandidateJobStatus.id).label('count')
+            )
+            .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type == CandidateJobStatusType.joined,
+                CandidateJobStatus.joined_at.isnot(None),
+                CandidateJobStatus.joined_at >= date_start,
+                CandidateJobStatus.joined_at < date_end
+            )
+            .group_by(func.date(CandidateJobStatus.joined_at))
+            .all()
+        )
+        for day, count in joined_data:
+            day_date = day.date() if isinstance(day, datetime) else day
+            day_key = day_date.isoformat()
+            if day_key in daily_breakdown_dict:
+                daily_breakdown_dict[day_key]["joined"] = count
+        
+        rejected_data = (
+            db.query(
+                func.date(CandidateJobStatus.rejected_at).label('rejected_date'),
+                func.count(CandidateJobStatus.id).label('count')
+            )
+            .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type.in_([CandidateJobStatusType.rejected, CandidateJobStatusType.dropped]),
+                CandidateJobStatus.rejected_at.isnot(None),
+                CandidateJobStatus.rejected_at >= date_start,
+                CandidateJobStatus.rejected_at < date_end
+            )
+            .group_by(func.date(CandidateJobStatus.rejected_at))
+            .all()
+        )
+        for day, count in rejected_data:
+            day_date = day.date() if isinstance(day, datetime) else day
+            day_key = day_date.isoformat()
+            if day_key in daily_breakdown_dict:
+                daily_breakdown_dict[day_key]["rejected"] = count
+    elif group_type == "weekly":
+        # Group by week - MySQL compatible
+        week_start_expr_joined = literal_column("DATE_SUB(DATE(candidate_job_status.joined_at), INTERVAL WEEKDAY(candidate_job_status.joined_at) DAY)")
+        joined_data = (
+            db.query(
+                func.date(week_start_expr_joined).label('joined_week'),
+                func.count(CandidateJobStatus.id).label('count')
+            )
+            .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type == CandidateJobStatusType.joined,
+                CandidateJobStatus.joined_at.isnot(None),
+                CandidateJobStatus.joined_at >= date_start,
+                CandidateJobStatus.joined_at < date_end
+            )
+            .group_by(func.date(week_start_expr_joined))
+            .all()
+        )
+        for week, count in joined_data:
+            week_date = week.date() if isinstance(week, datetime) else week
+            week_key = week_date.isoformat()
+            if week_key in daily_breakdown_dict:
+                daily_breakdown_dict[week_key]["joined"] = count
+        
+        week_start_expr_rejected = literal_column("DATE_SUB(DATE(candidate_job_status.rejected_at), INTERVAL WEEKDAY(candidate_job_status.rejected_at) DAY)")
+        rejected_data = (
+            db.query(
+                func.date(week_start_expr_rejected).label('rejected_week'),
+                func.count(CandidateJobStatus.id).label('count')
+            )
+            .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type.in_([CandidateJobStatusType.rejected, CandidateJobStatusType.dropped]),
+                CandidateJobStatus.rejected_at.isnot(None),
+                CandidateJobStatus.rejected_at >= date_start,
+                CandidateJobStatus.rejected_at < date_end
+            )
+            .group_by(func.date(week_start_expr_rejected))
+            .all()
+        )
+        for week, count in rejected_data:
+            week_date = week.date() if isinstance(week, datetime) else week
+            week_key = week_date.isoformat()
+            if week_key in daily_breakdown_dict:
+                daily_breakdown_dict[week_key]["rejected"] = count
+    else:  # monthly
+        # Group by month - MySQL compatible
+        month_start_expr_joined = literal_column("DATE_SUB(DATE(candidate_job_status.joined_at), INTERVAL DAY(candidate_job_status.joined_at)-1 DAY)")
+        joined_data = (
+            db.query(
+                func.date(month_start_expr_joined).label('joined_month'),
+                func.count(CandidateJobStatus.id).label('count')
+            )
+            .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type == CandidateJobStatusType.joined,
+                CandidateJobStatus.joined_at.isnot(None),
+                CandidateJobStatus.joined_at >= date_start,
+                CandidateJobStatus.joined_at < date_end
+            )
+            .group_by(func.date(month_start_expr_joined))
+            .all()
+        )
+        for month, count in joined_data:
+            month_date = month.date() if isinstance(month, datetime) else month
+            month_key = month_date.replace(day=1).isoformat()
+            if month_key in daily_breakdown_dict:
+                daily_breakdown_dict[month_key]["joined"] = count
+        
+        month_start_expr_rejected = literal_column("DATE_SUB(DATE(candidate_job_status.rejected_at), INTERVAL DAY(candidate_job_status.rejected_at)-1 DAY)")
+        rejected_data = (
+            db.query(
+                func.date(month_start_expr_rejected).label('rejected_month'),
+                func.count(CandidateJobStatus.id).label('count')
+            )
+            .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type.in_([CandidateJobStatusType.rejected, CandidateJobStatusType.dropped]),
+                CandidateJobStatus.rejected_at.isnot(None),
+                CandidateJobStatus.rejected_at >= date_start,
+                CandidateJobStatus.rejected_at < date_end
+            )
+            .group_by(func.date(month_start_expr_rejected))
+            .all()
+        )
+        for month, count in rejected_data:
+            month_date = month.date() if isinstance(month, datetime) else month
+            month_key = month_date.replace(day=1).isoformat()
+            if month_key in daily_breakdown_dict:
+                daily_breakdown_dict[month_key]["rejected"] = count
+    
+    daily_breakdown = sorted(daily_breakdown_dict.values(), key=lambda x: x["date"])
+
+    # Calculate summary tiles
+    # Total Jobs excludes PENDING (already calculated above)
+    # Total Openings only from active jobs
+    total_openings = sum(j["openings"] for j in jobs_summary)  # Only active jobs
+    total_sourced = sum(j["sourced"] for j in jobs_summary)
+    total_screened = sum(j["screened"] for j in jobs_summary)
+    total_lined_up = sum(j["lined_up"] for j in jobs_summary)
+    total_turned_up = sum(j["turned_up"] for j in jobs_summary)
+    total_offer_accepted = sum(j["offer_accepted"] for j in jobs_summary)
+    total_joined = sum(j["joined"] for j in jobs_summary)
+    total_rejected = sum(j["rejected"] for j in jobs_summary)
+    
+    summary_tiles = [
+        ("Total Jobs", total_jobs_all),  # Excludes PENDING
+        ("Total Active Jobs", total_active_jobs),
+        ("Total Inactive Jobs", total_inactive_jobs),
+        ("Total Closed Jobs", total_closed_jobs),
+        ("Total Openings", total_openings),  # Only active jobs
+        ("Total Sourced", total_sourced),
+        ("Total Screened", total_screened),
+        ("Total Lined Up", total_lined_up),
+        ("Total Turned Up", total_turned_up),
+        ("Total Offer Accepted", total_offer_accepted),
+        ("Total Joined", total_joined),
+        ("Total Rejected", total_rejected),
+    ]
+
+    # Build charts
+    # Chart 1: Tag status by job
+    tag_by_job = [
+        {
+            "job_title": j["job_title"],
+            "sourced": j["sourced"],
+            "screened": j["screened"],
+            "lined_up": j["lined_up"],
+            "turned_up": j["turned_up"],
+            "offer_accepted": j["offer_accepted"],
+        }
+        for j in jobs_summary[:20]  # Top 20 jobs
+    ]
+    
+    # Chart 2: Daily tag trends with company breakdown
+    # Build daily tag trends by company
+    daily_tag_trends_by_company = []
+    
+    # Get company breakdown for each date in daily_breakdown
+    for d in daily_breakdown:
+        date_key = d["date"]
+        
+        # For each company, get tag counts for this date
+        for company_id, company_info in companies.items():
+            company_name = company_info["name"]
+            
+            # Get jobs for this company
+            company_job_ids = [j.id for j in jobs if j.company_id == company_id]
+            if not company_job_ids:
+                continue
+            
+            # Get candidate_ids for this company's jobs
+            company_candidate_ids = [cid for cid, jid in candidate_to_job.items() if jid in company_job_ids]
+            if not company_candidate_ids:
+                continue
+            
+            # Get tag counts for this company on this date
+            company_sourced = 0
+            company_screened = 0
+            company_lined_up = 0
+            company_turned_up = 0
+            company_offer_accepted = 0
+            
+            # Determine date range for this specific date
+            if group_type == "hourly":
+                # For hourly, date_key is like "00:00", "01:00", etc.
+                # We need to get the hour and filter by that hour on from_date
+                try:
+                    hour = int(date_key.split(":")[0])
+                    date_start_hour = datetime.combine(from_date, datetime.min.time()) + timedelta(hours=hour)
+                    date_end_hour = date_start_hour + timedelta(hours=1)
+                except:
+                    continue
+            elif group_type == "daily":
+                try:
+                    date_obj = datetime.fromisoformat(date_key).date() if isinstance(date_key, str) else date_key
+                    date_start_hour = datetime.combine(date_obj, datetime.min.time())
+                    date_end_hour = date_start_hour + timedelta(days=1)
+                except:
+                    continue
+            elif group_type == "weekly":
+                try:
+                    week_start_date = datetime.fromisoformat(date_key).date() if isinstance(date_key, str) else date_key
+                    date_start_hour = datetime.combine(week_start_date, datetime.min.time())
+                    date_end_hour = date_start_hour + timedelta(days=7)
+                except:
+                    continue
+            else:  # monthly
+                try:
+                    month_start_date = datetime.fromisoformat(date_key).date() if isinstance(date_key, str) else date_key
+                    if isinstance(month_start_date, str):
+                        month_start_date = datetime.fromisoformat(month_start_date).date()
+                    # Get first day of month
+                    month_start = month_start_date.replace(day=1)
+                    date_start_hour = datetime.combine(month_start, datetime.min.time())
+                    # Get first day of next month
+                    if month_start.month == 12:
+                        next_month = month_start.replace(year=month_start.year + 1, month=1)
+                    else:
+                        next_month = month_start.replace(month=month_start.month + 1)
+                    date_end_hour = datetime.combine(next_month, datetime.min.time())
+                except:
+                    continue
+            
+            # Get tag counts for this company and date range
+            for tag, tag_key in [
+                (PipelineStageStatusTag.SOURCING, "sourced"),
+                (PipelineStageStatusTag.SCREENING, "screened"),
+                (PipelineStageStatusTag.LINE_UPS, "lined_up"),
+                (PipelineStageStatusTag.TURN_UPS, "turned_up"),
+                (PipelineStageStatusTag.OFFER_ACCEPTED, "offer_accepted"),
+            ]:
+                count = (
+                    db.query(func.count(func.distinct(CandidateActivity.candidate_id)))
+                    .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
+                    .join(
+                        PipelineStageStatus,
+                        and_(
+                            CandidateActivity.remark.isnot(None),
+                            PipelineStageStatus.option.isnot(None),
+                            func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                        )
+                    )
+                    .filter(
+                        CandidateJobs.job_id.in_(company_job_ids),
+                        CandidateActivity.candidate_id.in_(company_candidate_ids),
+                        CandidateActivity.type == CandidateActivityType.status,
+                        CandidateActivity.created_at >= date_start_hour,
+                        CandidateActivity.created_at < date_end_hour,
+                        cast(PipelineStageStatus.tag, String) == tag.value
+                    )
+                    .scalar() or 0
+                )
+                
+                if tag_key == "sourced":
+                    company_sourced = count
+                elif tag_key == "screened":
+                    company_screened = count
+                elif tag_key == "lined_up":
+                    company_lined_up = count
+                elif tag_key == "turned_up":
+                    company_turned_up = count
+                elif tag_key == "offer_accepted":
+                    company_offer_accepted = count
+            
+            # Only add if there's at least one non-zero value
+            if company_sourced > 0 or company_screened > 0 or company_lined_up > 0 or company_turned_up > 0 or company_offer_accepted > 0:
+                daily_tag_trends_by_company.append({
+                    "date": date_key,
+                    "company_name": company_name,
+                    "sourced": company_sourced,
+                    "screened": company_screened,
+                    "lined_up": company_lined_up,
+                    "turned_up": company_turned_up,
+                    "offer_accepted": company_offer_accepted,
+                })
+    
+    # Also keep the original aggregated version for charts (without company breakdown)
+    daily_tag_trends = [
+        {
+            "date": d["date"],
+            "sourced": d["sourced"],
+            "screened": d["screened"],
+            "lined_up": d["lined_up"],
+            "turned_up": d["turned_up"],
+            "offer_accepted": d["offer_accepted"],
+        }
+        for d in daily_breakdown
+    ]
+    
+    # Chart 3: Company performance
+    company_performance = [
+        {
+            "company_name": c["company_name"],
+            "total_joined": c["total_joined"],
+            "total_sourced": c["total_sourced"],
+            "total_screened": c["total_screened"],
+        }
+        for c in company_summary[:15]  # Top 15 companies
+    ]
+    
+    # Chart 4: Daily joined vs rejected
+    daily_joined_rejected = [
+        {
+            "date": d["date"],
+            "joined": d["joined"],
+            "rejected": d["rejected"],
+        }
+        for d in daily_breakdown
+    ]
+    
+    # Build HR Summary - Get all HRs who have activity in the date range
+    # Get all unique user_ids from activities in the date range
+    hr_activity_data = (
+        db.query(
+            CandidateActivity.user_id,
+            func.count(func.distinct(CandidateActivity.candidate_id)).label('candidate_count'),
+            func.count(CandidateActivity.id).label('activity_count')
+        )
+        .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
+        .filter(
+            CandidateJobs.job_id.in_(job_ids),
+            CandidateActivity.user_id.isnot(None),
+            CandidateActivity.created_at >= date_start,
+            CandidateActivity.created_at < date_end
+        )
+        .group_by(CandidateActivity.user_id)
+        .all()
+    )
+    
+    # Get joined/rejected counts per HR
+    hr_joined_data = (
+        db.query(
+            CandidateJobStatus.created_by,
+            func.count(CandidateJobStatus.id).label('joined_count')
+        )
+        .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+        .filter(
+            CandidateJobs.job_id.in_(job_ids),
+            CandidateJobStatus.type == CandidateJobStatusType.joined,
+            CandidateJobStatus.joined_at.isnot(None),
+            CandidateJobStatus.joined_at >= date_start,
+            CandidateJobStatus.joined_at < date_end,
+            CandidateJobStatus.created_by.isnot(None)
+        )
+        .group_by(CandidateJobStatus.created_by)
+        .all()
+    )
+    hr_joined_map = {hr_id: count for hr_id, count in hr_joined_data}
+    
+    hr_rejected_data = (
+        db.query(
+            CandidateJobStatus.created_by,
+            func.count(CandidateJobStatus.id).label('rejected_count')
+        )
+        .join(CandidateJobs, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+        .filter(
+            CandidateJobs.job_id.in_(job_ids),
+            CandidateJobStatus.type.in_([CandidateJobStatusType.rejected, CandidateJobStatusType.dropped]),
+            CandidateJobStatus.rejected_at.isnot(None),
+            CandidateJobStatus.rejected_at >= date_start,
+            CandidateJobStatus.rejected_at < date_end,
+            CandidateJobStatus.created_by.isnot(None)
+        )
+        .group_by(CandidateJobStatus.created_by)
+        .all()
+    )
+    hr_rejected_map = {hr_id: count for hr_id, count in hr_rejected_data}
+    
+    # Build HR summary list
+    hr_summary = []
+    hr_user_ids = set()
+    for user_id, candidate_count, activity_count in hr_activity_data:
+        hr_user_ids.add(user_id)
+        user = db.query(User).filter(User.id == user_id).first()
+        hr_name = user.name if user else f"User {user_id}"
+        
+        total_activity = activity_count + hr_joined_map.get(user_id, 0) + hr_rejected_map.get(user_id, 0)
+        
+        hr_summary.append({
+            "hr_id": user_id,
+            "hr_name": hr_name,
+            "candidate_count": candidate_count,
+            "activity_count": activity_count,
+            "joined": hr_joined_map.get(user_id, 0),
+            "rejected": hr_rejected_map.get(user_id, 0),
+            "total_activity": total_activity,
+        })
+    
+    # Also include HRs from joined/rejected who might not have activities
+    for hr_id in set(list(hr_joined_map.keys()) + list(hr_rejected_map.keys())):
+        if hr_id not in hr_user_ids:
+            user = db.query(User).filter(User.id == hr_id).first()
+            hr_name = user.name if user else f"User {hr_id}"
+            total_activity = hr_joined_map.get(hr_id, 0) + hr_rejected_map.get(hr_id, 0)
+            hr_summary.append({
+                "hr_id": hr_id,
+                "hr_name": hr_name,
+                "candidate_count": 0,
+                "activity_count": 0,
+                "joined": hr_joined_map.get(hr_id, 0),
+                "rejected": hr_rejected_map.get(hr_id, 0),
+                "total_activity": total_activity,
+            })
+    
+    # Sort HRs by total activity (descending)
+    hr_summary.sort(key=lambda x: x["total_activity"], reverse=True)
+
+    return {
+        "summary_tiles": summary_tiles,
+        "jobs_summary": jobs_summary,
+        "company_summary": company_summary,
+        "hr_summary": hr_summary,
+        "daily_breakdown": daily_breakdown,
+        "charts": {
+            "tag_by_job": tag_by_job,
+            "daily_tag_trends": daily_tag_trends,
+            "daily_tag_trends_by_company": daily_tag_trends_by_company,  # For Excel export with company breakdown
+            "company_performance": company_performance,
+            "daily_joined_rejected": daily_joined_rejected,
+        },
+        "date_range": {
+            "from_date": from_date.isoformat(),
+            "to_date": to_date.isoformat(),
+            "is_daily": is_daily,
+            "date_range_days": date_range_days,
+            "group_type": group_type  # hourly, daily, weekly, monthly
+        }
+    }

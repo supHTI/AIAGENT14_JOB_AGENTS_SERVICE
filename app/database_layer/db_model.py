@@ -520,12 +520,6 @@ class PipelineStageStatus(Base):
     __tablename__ = "pipeline_stage_status" 
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    pipeline_stage_id = Column(Integer, ForeignKey("pipeline_stages.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False)
-    option = Column(String(100))
-    color_code = Column(String(20))
-    order = Column(Integer)
-    tag = Column(SAEnum(PipelineStageStatusTag, name="pipeline_stage_status_tag"), nullable=True)
-
     pipeline_stage_id = Column(
         Integer,
         ForeignKey(
@@ -536,15 +530,13 @@ class PipelineStageStatus(Base):
         nullable=False,
         index=True,
     )
-
     option = Column(String(100), index=True)
     color_code = Column(String(20))
     order = Column(Integer, index=True)
-
     tag = Column(
         SAEnum(
-            PipelineStageTag,
-            name="pipeline_stage_tag",
+            PipelineStageStatusTag,
+            name="pipeline_stage_status_tag",
         ),
         nullable=True,
     )

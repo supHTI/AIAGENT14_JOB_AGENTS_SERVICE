@@ -17,9 +17,10 @@ from app.schemas.reports import ExportFormat, ReportFilter
 from app.services.exporters import (
     export_job_details_pdf,
     export_jobs_overview_pdf,
+    export_jobs_summary_pdf,
     export_multi_sheet_xlsx,
 )
-from app.services.reports.jobs import build_job_details_report, build_job_daily_report, build_jobs_overview_report
+from app.services.reports.jobs import build_job_details_report, build_job_daily_report, build_jobs_overview_report, build_jobs_summary_report, build_jobs_summary_report
 from app.api.deps.auth import require_report_admin
 from app.api.deps.reports import parse_date_filters
 from app.api.deps.auth import validate_token
@@ -347,6 +348,84 @@ def job_daily_report(
         content = export_multi_sheet_xlsx(sheets)
         filename = f"{base_name}.xlsx"
         mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@router.get("/summary")
+def jobs_summary_report(
+    from_date: date = Query(..., description="Start date for the report (YYYY-MM-DD)"),
+    to_date: date = Query(..., description="End date for the report (YYYY-MM-DD)"),
+    export_format: ExportFormat = Query(ExportFormat.pdf, description="xlsx|pdf"),
+    user: User = Depends(validate_token),
+    db: Session = Depends(get_db),
+):
+    """
+    Jobs Summary Report - Returns a comprehensive summary of all jobs with tag-based statuses,
+    company details, and daily breakdowns for the specified date range.
+    """
+    # Validate dates cannot be in the future
+    today = date.today()
+    if from_date > today:
+        raise HTTPException(status_code=400, detail="from_date cannot be a future date")
+    if to_date > today:
+        raise HTTPException(status_code=400, detail="to_date cannot be a future date")
+    if from_date > to_date:
+        raise HTTPException(status_code=400, detail="from_date cannot be greater than to_date")
+    
+    try:
+        payload = build_jobs_summary_report(db, from_date, to_date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error generating report: {str(e)}")
+    
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M")
+    
+    # Determine if it's a daily report
+    is_daily = (from_date == to_date)
+    if is_daily:
+        date_str = from_date.strftime("%Y%m%d")
+        base_name = f"jobs_summary_daily_{date_str}_{timestamp}"
+        title = f"HTI Jobs Summary Report - {from_date.strftime('%d-%m-%Y')}"
+    else:
+        date_str = f"{from_date.strftime('%Y%m%d')}_{to_date.strftime('%Y%m%d')}"
+        base_name = f"jobs_summary_{date_str}_{timestamp}"
+        title = f"HTI Jobs Summary Report - {from_date.strftime('%d-%m-%Y')} to {to_date.strftime('%d-%m-%Y')}"
+
+    if export_format == ExportFormat.pdf:
+        content = export_jobs_summary_pdf(
+            title,
+            payload.get("summary_tiles", []),
+            payload.get("jobs_summary", []),
+            payload.get("company_summary", []),
+            payload.get("hr_summary", []),
+            payload.get("daily_breakdown", []),
+            payload.get("charts", {}),
+            generated_by=user.name if user else "",
+            date_range=(from_date, to_date),
+        )
+        filename = f"{base_name}.pdf"
+        mime = "application/pdf"
+    elif export_format == ExportFormat.xlsx:
+        # Excel export
+        sheets = {
+            "Summary": [{"metric": k, "value": v} for k, v in payload.get("summary_tiles", [])],
+            "Jobs Summary": payload.get("jobs_summary", []),
+            "Company Summary": payload.get("company_summary", []),
+            "HR Summary": payload.get("hr_summary", []),
+            "Daily Breakdown": payload.get("daily_breakdown", []),
+            "Tag by Job": payload.get("charts", {}).get("tag_by_job", []),
+            "Daily Trends": payload.get("charts", {}).get("daily_tag_trends_by_company", []),
+            "Company Performance": payload.get("charts", {}).get("company_performance", []),
+            "Daily Joined vs Rejected": payload.get("charts", {}).get("daily_joined_rejected", []),
+        }
+        content = export_multi_sheet_xlsx(sheets)
+        filename = f"{base_name}.xlsx"
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported export format: {export_format}")
 
     return StreamingResponse(
         io.BytesIO(content),
