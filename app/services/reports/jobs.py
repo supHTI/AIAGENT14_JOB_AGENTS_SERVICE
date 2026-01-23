@@ -3536,6 +3536,13 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
             cand_info = candidates_data.get(cand_id, {})
             hr_name = user_map.get(cand_info.get("assigned_to")) if cand_info.get("assigned_to") else "N/A"
             
+            # Format date to IST in readable format
+            latest_activity_ist = None
+            if latest_activity:
+                ist_datetime = to_ist(latest_activity)
+                if ist_datetime:
+                    latest_activity_ist = ist_datetime.strftime("%d-%m-%Y %H:%M IST")
+            
             candidate_details_by_status[status_key].append({
                 "candidate_id": cand_id,
                 "candidate_name": cand_info.get("candidate_name", "N/A"),
@@ -3545,7 +3552,7 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
                 "job_title": job.title if job else "N/A",
                 "company_name": company_name,
                 "hr_name": hr_name,
-                "latest_activity": to_ist(latest_activity).isoformat() if latest_activity else None
+                "latest_activity": latest_activity_ist
             })
     
     # For joined status
@@ -3575,6 +3582,13 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
             cand_info = candidates_data.get(cand_id, {})
             hr_name = user_map.get(cand_info.get("assigned_to")) if cand_info.get("assigned_to") else "N/A"
             
+            # Format date to IST in readable format
+            joined_at_ist = None
+            if joined_at:
+                ist_datetime = to_ist(joined_at)
+                if ist_datetime:
+                    joined_at_ist = ist_datetime.strftime("%d-%m-%Y %H:%M IST")
+            
             candidate_details_by_status["joined"].append({
                 "candidate_id": cand_id,
                 "candidate_name": cand_info.get("candidate_name", "N/A"),
@@ -3584,7 +3598,7 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
                 "job_title": job.title if job else "N/A",
                 "company_name": company_name,
                 "hr_name": hr_name,
-                "latest_activity": to_ist(joined_at).isoformat() if joined_at else None
+                "latest_activity": joined_at_ist
             })
     
     # For rejected status
@@ -3614,6 +3628,13 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
             cand_info = candidates_data.get(cand_id, {})
             hr_name = user_map.get(cand_info.get("assigned_to")) if cand_info.get("assigned_to") else "N/A"
             
+            # Format date to IST in readable format
+            rejected_at_ist = None
+            if rejected_at:
+                ist_datetime = to_ist(rejected_at)
+                if ist_datetime:
+                    rejected_at_ist = ist_datetime.strftime("%d-%m-%Y %H:%M IST")
+            
             candidate_details_by_status["rejected"].append({
                 "candidate_id": cand_id,
                 "candidate_name": cand_info.get("candidate_name", "N/A"),
@@ -3623,7 +3644,7 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
                 "job_title": job.title if job else "N/A",
                 "company_name": company_name,
                 "hr_name": hr_name,
-                "latest_activity": to_ist(rejected_at).isoformat() if rejected_at else None
+                "latest_activity": rejected_at_ist
             })
     
     # Get number of recruiters per job for "Jobs and Recruiters" table
