@@ -406,11 +406,45 @@ def jobs_summary_report(
             generated_by=user.name if user else "",
             date_range=(from_date, to_date),
             jobs_and_recruiters=payload.get("jobs_and_recruiters", []),
+            candidate_details_by_status=payload.get("candidate_details_by_status", {}),
         )
         filename = f"{base_name}.pdf"
         mime = "application/pdf"
     elif export_format == ExportFormat.xlsx:
         # Excel export
+        candidate_details_by_status = payload.get("candidate_details_by_status", {})
+        
+        # Prepare candidate sheets for each status with detailed information
+        candidate_sheets = {}
+        status_labels = {
+            "sourced": "Sourced",
+            "screened": "Screened",
+            "lined_up": "Lined Up",
+            "turned_up": "Turned Up",
+            "offer_accepted": "Offer Accepted",
+            "joined": "Joined",
+            "rejected": "Rejected"
+        }
+        
+        for status_key, sheet_name in status_labels.items():
+            candidates = candidate_details_by_status.get(status_key, [])
+            if candidates:
+                # Format candidate data with all required fields for Excel
+                candidate_sheets[sheet_name] = [
+                    {
+                        "Candidate ID": row.get("candidate_id", ""),
+                        "Candidate Name": row.get("candidate_name", ""),
+                        "Candidate Email": row.get("candidate_email", ""),
+                        "Candidate Phone": row.get("candidate_phone_number", ""),
+                        "Job ID": row.get("job_id", ""),
+                        "Job Title": row.get("job_title", ""),
+                        "Company Name": row.get("company_name", ""),
+                        "HR Name": row.get("hr_name", ""),
+                        "Latest Activity": row.get("latest_activity", ""),
+                    }
+                    for row in candidates
+                ]
+        
         sheets = {
             "Summary": [{"metric": k, "value": v} for k, v in payload.get("summary_tiles", [])],
             "Jobs Summary": payload.get("jobs_summary", []),
@@ -422,6 +456,9 @@ def jobs_summary_report(
             "Company Performance": payload.get("charts", {}).get("company_performance", []),
             "Daily Joined vs Rejected": payload.get("charts", {}).get("daily_joined_rejected", []),
         }
+        
+        # Add candidate sheets
+        sheets.update(candidate_sheets)
         content = export_multi_sheet_xlsx(sheets)
         filename = f"{base_name}.xlsx"
         mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
