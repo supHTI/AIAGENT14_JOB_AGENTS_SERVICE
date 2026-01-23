@@ -3427,6 +3427,205 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
             "rejected": 0,
         }
     
+    # Get candidate details by status for PDF and Excel exports
+    # Map candidate_id to job_id and company_id
+    candidate_to_job_map = {cj.candidate_id: cj.job_id for cj in candidate_jobs}
+    candidate_to_company_map = {}
+    for cid, jid in candidate_to_job_map.items():
+        job = next((j for j in jobs if j.id == jid), None)
+        if job:
+            candidate_to_company_map[cid] = job.company_id
+    
+    # Get all candidates with their details
+    candidates_data = {}
+    if candidate_ids:
+        candidates_rows = (
+            db.query(
+                Candidates.candidate_id,
+                Candidates.candidate_name,
+                Candidates.candidate_email,
+                Candidates.candidate_phone_number,
+                Candidates.assigned_to
+            )
+            .filter(Candidates.candidate_id.in_(candidate_ids))
+            .all()
+        )
+        candidates_data = {
+            c.candidate_id: {
+                "candidate_name": c.candidate_name,
+                "candidate_email": c.candidate_email,
+                "candidate_phone_number": c.candidate_phone_number,
+                "assigned_to": c.assigned_to
+            }
+            for c in candidates_rows
+        }
+    
+    # Get user names for HRs
+    hr_user_ids = set()
+    for cand_data in candidates_data.values():
+        if cand_data.get("assigned_to"):
+            hr_user_ids.add(cand_data["assigned_to"])
+    
+    user_map = {}
+    if hr_user_ids:
+        user_rows = db.query(User.id, User.name).filter(User.id.in_(hr_user_ids)).all()
+        user_map = {uid: uname for uid, uname in user_rows}
+    
+    # Get candidate details by status
+    candidate_details_by_status = {
+        "sourced": [],
+        "screened": [],
+        "lined_up": [],
+        "turned_up": [],
+        "offer_accepted": [],
+        "joined": [],
+        "rejected": []
+    }
+    
+    # For tag-based statuses (sourced, screened, lined_up, turned_up, offer_accepted)
+    for tag, status_key in [
+        (PipelineStageStatusTag.SOURCING, "sourced"),
+        (PipelineStageStatusTag.SCREENING, "screened"),
+        (PipelineStageStatusTag.LINE_UPS, "lined_up"),
+        (PipelineStageStatusTag.TURN_UPS, "turned_up"),
+        (PipelineStageStatusTag.OFFER_ACCEPTED, "offer_accepted"),
+    ]:
+        # Get distinct candidates with this tag in the date range (one entry per candidate)
+        # Get the latest activity per candidate for this tag
+        tag_candidates_raw = (
+            db.query(
+                CandidateActivity.candidate_id,
+                CandidateActivity.user_id,
+                CandidateActivity.created_at.label('latest_activity')
+            )
+            .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
+            .join(
+                PipelineStageStatus,
+                and_(
+                    CandidateActivity.remark.isnot(None),
+                    PipelineStageStatus.option.isnot(None),
+                    func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                )
+            )
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateActivity.candidate_id.in_(candidate_ids),
+                CandidateActivity.type == CandidateActivityType.status,
+                CandidateActivity.created_at >= date_start,
+                CandidateActivity.created_at < date_end,
+                cast(PipelineStageStatus.tag, String) == tag.value
+            )
+            .order_by(CandidateActivity.candidate_id, CandidateActivity.created_at.desc())
+            .all()
+        )
+        
+        # Deduplicate by candidate_id, keeping only the latest activity
+        seen_candidates = set()
+        tag_candidates = []
+        for cand_id, user_id, latest_activity in tag_candidates_raw:
+            if cand_id not in seen_candidates:
+                seen_candidates.add(cand_id)
+                tag_candidates.append((cand_id, user_id, latest_activity))
+        
+        for cand_id, user_id, latest_activity in tag_candidates:
+            job_id = candidate_to_job_map.get(cand_id)
+            company_id = candidate_to_company_map.get(cand_id)
+            job = next((j for j in jobs if j.id == job_id), None)
+            company_name = companies.get(company_id, {}).get("name", "N/A") if company_id else "N/A"
+            
+            cand_info = candidates_data.get(cand_id, {})
+            hr_name = user_map.get(cand_info.get("assigned_to")) if cand_info.get("assigned_to") else "N/A"
+            
+            candidate_details_by_status[status_key].append({
+                "candidate_id": cand_id,
+                "candidate_name": cand_info.get("candidate_name", "N/A"),
+                "candidate_email": cand_info.get("candidate_email"),
+                "candidate_phone_number": cand_info.get("candidate_phone_number"),
+                "job_id": job.job_id if job else "N/A",
+                "job_title": job.title if job else "N/A",
+                "company_name": company_name,
+                "hr_name": hr_name,
+                "latest_activity": to_ist(latest_activity).isoformat() if latest_activity else None
+            })
+    
+    # For joined status
+    if candidate_job_ids:
+        joined_candidates = (
+            db.query(
+                CandidateJobs.candidate_id,
+                CandidateJobs.job_id,
+                CandidateJobStatus.joined_at
+            )
+            .join(CandidateJobStatus, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type == CandidateJobStatusType.joined,
+                CandidateJobStatus.joined_at.isnot(None),
+                CandidateJobStatus.joined_at >= date_start,
+                CandidateJobStatus.joined_at < date_end
+            )
+            .all()
+        )
+        
+        for cand_id, job_id, joined_at in joined_candidates:
+            company_id = candidate_to_company_map.get(cand_id)
+            job = next((j for j in jobs if j.id == job_id), None)
+            company_name = companies.get(company_id, {}).get("name", "N/A") if company_id else "N/A"
+            
+            cand_info = candidates_data.get(cand_id, {})
+            hr_name = user_map.get(cand_info.get("assigned_to")) if cand_info.get("assigned_to") else "N/A"
+            
+            candidate_details_by_status["joined"].append({
+                "candidate_id": cand_id,
+                "candidate_name": cand_info.get("candidate_name", "N/A"),
+                "candidate_email": cand_info.get("candidate_email"),
+                "candidate_phone_number": cand_info.get("candidate_phone_number"),
+                "job_id": job.job_id if job else "N/A",
+                "job_title": job.title if job else "N/A",
+                "company_name": company_name,
+                "hr_name": hr_name,
+                "latest_activity": to_ist(joined_at).isoformat() if joined_at else None
+            })
+    
+    # For rejected status
+    if candidate_job_ids:
+        rejected_candidates = (
+            db.query(
+                CandidateJobs.candidate_id,
+                CandidateJobs.job_id,
+                CandidateJobStatus.rejected_at
+            )
+            .join(CandidateJobStatus, CandidateJobStatus.candidate_job_id == CandidateJobs.id)
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateJobStatus.type.in_([CandidateJobStatusType.rejected, CandidateJobStatusType.dropped]),
+                CandidateJobStatus.rejected_at.isnot(None),
+                CandidateJobStatus.rejected_at >= date_start,
+                CandidateJobStatus.rejected_at < date_end
+            )
+            .all()
+        )
+        
+        for cand_id, job_id, rejected_at in rejected_candidates:
+            company_id = candidate_to_company_map.get(cand_id)
+            job = next((j for j in jobs if j.id == job_id), None)
+            company_name = companies.get(company_id, {}).get("name", "N/A") if company_id else "N/A"
+            
+            cand_info = candidates_data.get(cand_id, {})
+            hr_name = user_map.get(cand_info.get("assigned_to")) if cand_info.get("assigned_to") else "N/A"
+            
+            candidate_details_by_status["rejected"].append({
+                "candidate_id": cand_id,
+                "candidate_name": cand_info.get("candidate_name", "N/A"),
+                "candidate_email": cand_info.get("candidate_email"),
+                "candidate_phone_number": cand_info.get("candidate_phone_number"),
+                "job_id": job.job_id if job else "N/A",
+                "job_title": job.title if job else "N/A",
+                "company_name": company_name,
+                "hr_name": hr_name,
+                "latest_activity": to_ist(rejected_at).isoformat() if rejected_at else None
+            })
+    
     # Get number of recruiters per job for "Jobs and Recruiters" table
     jobs_and_recruiters = []
     for job in jobs:
@@ -3484,6 +3683,7 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
         "hr_summary": hr_summary,
         "daily_breakdown": daily_breakdown,
         "jobs_and_recruiters": jobs_and_recruiters,
+        "candidate_details_by_status": candidate_details_by_status,
         "charts": {
             "tag_by_job": tag_by_job,
             "daily_tag_trends": daily_tag_trends,

@@ -1842,7 +1842,7 @@ def export_job_details_pdf(
                         detail_headers = ["Candidate ID", "Candidate Name", "HR Name", "Date & Time"]
                         # Adjusted widths to fit page: [80, 125, 95, 135] = 435 points (within 532 limit)
                         # Candidate ID gets 80 to prevent overlap, names can be cropped
-                        detail_col_widths = [180, 125, 120, 135]
+                        detail_col_widths = [250, 125, 100, 135]
                         current_x = margin
                         for w, h in zip(detail_col_widths, detail_headers):
                             c.drawString(current_x, y, h)
@@ -2246,6 +2246,7 @@ def export_jobs_summary_pdf(
     generated_by: str = "",
     date_range: Tuple[date, date] = (None, None),
     jobs_and_recruiters: List[Mapping] = None,
+    candidate_details_by_status: Mapping[str, List[Mapping]] = None,
 ) -> bytes:
     """
     Export jobs summary report to PDF with tag-based statuses, company details, and daily breakdowns.
@@ -2990,6 +2991,105 @@ def export_jobs_summary_pdf(
             x += col_widths[10]
             c.drawString(x, y, total_activity)
             y -= 11
+
+    # Candidate Details by Status - Add sections for each status
+    if candidate_details_by_status:
+        status_labels = {
+            "sourced": "Sourced Candidates",
+            "screened": "Screened Candidates",
+            "lined_up": "Lined Up Candidates",
+            "turned_up": "Turned Up Candidates",
+            "offer_accepted": "Offer Accepted Candidates",
+            "joined": "Joined Candidates",
+            "rejected": "Rejected Candidates"
+        }
+        
+        for status_key, status_label in status_labels.items():
+            candidates = candidate_details_by_status.get(status_key, [])
+            if not candidates:
+                continue
+            
+            # Start new page for each status section
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+            
+            # Section title
+            c.setFont("Helvetica-Bold", 14)
+            c.setFillColor(colors.HexColor("#0f172a"))
+            c.drawString(margin, y, status_label)
+            y -= 25
+            
+            # Table headers
+            # Total available width: 612 (letter) - 80 (margins) = 532
+            # Candidate ID needs maximum width to prevent overlap/truncation
+            # Allocate: 250 for Candidate ID (to fit IDs up to 40+ chars), rest for others
+            headers = ["Candidate ID", "Candidate Name", "Job Title", "HR Name"]
+            col_widths = [200, 110, 120, 52]  # Total: 532 pixels
+            
+            c.setFont("Helvetica-Bold", 9)
+            c.setFillColor(colors.HexColor("#0f172a"))
+            x = margin
+            for i, header in enumerate(headers):
+                c.drawString(x, y, header)
+                x += col_widths[i]
+            y -= 15
+            
+            c.setStrokeColor(colors.HexColor("#e2e8f0"))
+            c.line(margin, y, width - margin, y)
+            y -= 10
+            
+            # Table rows
+            c.setFont("Helvetica", 7)  # Slightly smaller font to fit better
+            c.setFillColor(colors.black)
+            for row in candidates:
+                if y < 60:
+                    c.showPage()
+                    _draw_header_footer(c, title, subtitle)
+                    y = height - 110
+                    # Redraw section title
+                    c.setFont("Helvetica-Bold", 14)
+                    c.setFillColor(colors.HexColor("#0f172a"))
+                    c.drawString(margin, y, status_label)
+                    y -= 25
+                    # Redraw headers
+                    c.setFont("Helvetica-Bold", 9)
+                    c.setFillColor(colors.HexColor("#0f172a"))
+                    x = margin
+                    for i, header in enumerate(headers):
+                        c.drawString(x, y, header)
+                        x += col_widths[i]
+                    y -= 15
+                    c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                    c.line(margin, y, width - margin, y)
+                    y -= 10
+                    c.setFont("Helvetica", 7)
+                    c.setFillColor(colors.black)
+                
+                candidate_id = str(row.get("candidate_id", "N/A"))
+                candidate_name = str(row.get("candidate_name", "N/A"))
+                job_title = str(row.get("job_title", "N/A"))
+                hr_name = str(row.get("hr_name", "N/A"))
+                
+                # Truncate other fields if needed, but NEVER truncate Candidate ID
+                # Candidate ID: Full width (220px) - should fit IDs up to ~35 chars
+                if len(candidate_name) > 15:
+                    candidate_name = candidate_name[:12] + "..."
+                if len(job_title) > 18:
+                    job_title = job_title[:15] + "..."
+                if len(hr_name) > 8:
+                    hr_name = hr_name[:20] + "..."
+                
+                x = margin
+                # Candidate ID - use full width, never truncate
+                c.drawString(x, y, candidate_id)
+                x += col_widths[0]
+                c.drawString(x, y, candidate_name)
+                x += col_widths[1]
+                c.drawString(x, y, job_title)
+                x += col_widths[2]
+                c.drawString(x, y, hr_name)
+                y -= 12
 
     c.showPage()
     _draw_header_footer(c, title, subtitle)
