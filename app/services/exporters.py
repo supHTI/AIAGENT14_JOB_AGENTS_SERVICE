@@ -2245,6 +2245,7 @@ def export_jobs_summary_pdf(
     charts: Mapping[str, List[Mapping]],
     generated_by: str = "",
     date_range: Tuple[date, date] = (None, None),
+    jobs_and_recruiters: List[Mapping] = None,
 ) -> bytes:
     """
     Export jobs summary report to PDF with tag-based statuses, company details, and daily breakdowns.
@@ -2578,12 +2579,179 @@ def export_jobs_summary_pdf(
         chart_height = 200
         c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
         y -= chart_height - 20
+    
+    # Best Performing Jobs Graph - After Daily Joined vs Rejected
+    # Filter jobs with activities (only show jobs that have activity)
+    jobs_with_activity = [j for j in jobs_summary if j.get("total_activity", 0) > 0]
+    
+    if jobs_with_activity:
+        # Limit to top 15 jobs to prevent overcrowding
+        jobs_with_activity = jobs_with_activity[:15]
+        
+        # Add vertical separation
+        y -= 30
+        
+        # Check if we need a new page
+        if y < 300:
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Best Performing Jobs")
+        y -= 20
+        
+        # Build multi-line chart similar to Daily Status graph
+        fig = Figure(figsize=(10, 4))
+        ax = fig.add_subplot(111)
+        
+        # Prepare job labels (truncate with "..." to fit)
+        job_labels_full = [j.get("job_title", f"Job {j.get('job_id', 'N/A')}") for j in jobs_with_activity]
+        # Determine max length based on number of jobs
+        num_jobs = len(job_labels_full)
+        if num_jobs <= 5:
+            max_len = 25
+        elif num_jobs <= 10:
+            max_len = 18
+        else:
+            max_len = 12
+        
+        job_labels = [label[:max_len] + "..." if len(label) > max_len else label for label in job_labels_full]
+        
+        # Prepare data for each status
+        sourced = [j.get("sourced", 0) for j in jobs_with_activity]
+        screened = [j.get("screened", 0) for j in jobs_with_activity]
+        lined_up = [j.get("lined_up", 0) for j in jobs_with_activity]
+        turned_up = [j.get("turned_up", 0) for j in jobs_with_activity]
+        offer_accepted = [j.get("offer_accepted", 0) for j in jobs_with_activity]
+        joined = [j.get("joined", 0) for j in jobs_with_activity]
+        rejected = [j.get("rejected", 0) for j in jobs_with_activity]
+        
+        # Use numeric positions for plotting
+        x_positions = range(len(job_labels))
+        
+        # Plot multiple lines for each status
+        ax.plot(x_positions, sourced, marker='o', label='Sourced', linewidth=2, markersize=4, color='#2563eb')
+        ax.plot(x_positions, screened, marker='s', label='Screened', linewidth=2, markersize=4, color='#0ea5e9')
+        ax.plot(x_positions, lined_up, marker='^', label='Lined Up', linewidth=2, markersize=4, color='#10b981')
+        ax.plot(x_positions, turned_up, marker='v', label='Turned Up', linewidth=2, markersize=4, color='#f59e0b')
+        ax.plot(x_positions, offer_accepted, marker='d', label='Offer Accepted', linewidth=2, markersize=4, color='#8b5cf6')
+        ax.plot(x_positions, joined, marker='*', label='Joined', linewidth=2, markersize=5, color='#10b981')
+        ax.plot(x_positions, rejected, marker='x', label='Rejected', linewidth=2, markersize=5, color='#ef4444')
+        
+        ax.set_xlabel('Jobs', fontsize=10)
+        ax.set_ylabel('Count', fontsize=10)
+        ax.set_title('Best Performing Jobs - Activity by Status', fontsize=12, fontweight='bold')
+        ax.legend(loc='best', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Set X-axis labels with rotation and truncation
+        rotation = 45 if num_jobs > 5 else (45 if num_jobs > 3 else 0)
+        # Show every Nth label to prevent overlap (max 15 labels)
+        if num_jobs > 15:
+            step = max(1, num_jobs // 15)
+            ax.set_xticks(x_positions[::step])
+            ax.set_xticklabels(job_labels[::step], rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        else:
+            ax.set_xticks(x_positions)
+            ax.set_xticklabels(job_labels, rotation=rotation, ha='right' if rotation else 'center', fontsize=8)
+        
+        fig.tight_layout()
+        
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format='png', dpi=100, bbox_inches='tight')
+        img_buffer.seek(0)
+        plt.close(fig)
+        
+        img = ImageReader(img_buffer)
+        chart_height = 200
+        c.drawImage(img, margin, y - chart_height, width=width - (2 * margin), height=chart_height, preserveAspectRatio=True, anchor="nw")
+        y -= chart_height - 20
 
-    # Jobs Summary Table - Start on page 3
-    if jobs_summary:
+    # Jobs and Recruiters Table - Before Jobs Summary on page 3
+    if jobs_and_recruiters:
         c.showPage()
         _draw_header_footer(c, title, subtitle)
         y = height - 110
+        
+        c.setFont("Helvetica-Bold", 12)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        c.drawString(margin, y, "Jobs and Recruiters")
+        y -= 20
+        
+        # Table headers - Job Id column wide enough to show full IDs without truncation
+        # Total width: 612 (letter) - 80 (margins) = 532 available
+        headers = ["Job Id", "Job Title", "Company", "No of Recruiters"]
+        col_widths = [200, 140, 120, 72]
+        
+        c.setFont("Helvetica-Bold", 9)
+        c.setFillColor(colors.HexColor("#0f172a"))
+        x = margin
+        for i, header in enumerate(headers):
+            c.drawString(x, y, header)
+            x += col_widths[i]
+        y -= 15
+        
+        c.setStrokeColor(colors.HexColor("#e2e8f0"))
+        c.line(margin, y, width - margin, y)
+        y -= 12
+        
+        # Table rows
+        c.setFont("Helvetica", 9)
+        c.setFillColor(colors.black)
+        for row in jobs_and_recruiters:
+            if y < 60:
+                c.showPage()
+                _draw_header_footer(c, title, subtitle)
+                y = height - 110
+                # Redraw headers
+                c.setFont("Helvetica-Bold", 9)
+                c.setFillColor(colors.HexColor("#0f172a"))
+                x = margin
+                for i, header in enumerate(headers):
+                    c.drawString(x, y, header)
+                    x += col_widths[i]
+                y -= 15
+                c.setStrokeColor(colors.HexColor("#e2e8f0"))
+                c.line(margin, y, width - margin, y)
+                y -= 12
+                c.setFont("Helvetica", 9)
+                c.setFillColor(colors.black)
+            
+            job_id = str(row.get("job_id", "N/A"))
+            job_title = str(row.get("job_title", "N/A"))
+            company_name = str(row.get("company_name", "N/A"))
+            num_recruiters = str(row.get("num_recruiters", 0))
+            
+            x = margin
+            # Job ID - NEVER truncate, always show full ID
+            c.drawString(x, y, job_id)
+            x += col_widths[0]
+            
+            # Job Title - truncate if too long to fit in column (max ~18 chars for 140 width)
+            if len(job_title) > 18:
+                job_title = job_title[:15] + "..."
+            c.drawString(x, y, job_title)
+            x += col_widths[1]
+            
+            # Company - truncate if too long (max ~16 chars for 120 width)
+            if len(company_name) > 16:
+                company_name = company_name[:13] + "..."
+            c.drawString(x, y, company_name)
+            x += col_widths[2]
+            
+            c.drawString(x, y, num_recruiters)
+            y -= 14
+        
+        y -= 20
+
+    # Jobs Summary Table - Start on page 3
+    if jobs_summary:
+        if y < 200:  # If not enough space, start new page
+            c.showPage()
+            _draw_header_footer(c, title, subtitle)
+            y = height - 110
         
         c.setFont("Helvetica-Bold", 12)
         c.setFillColor(colors.HexColor("#0f172a"))
@@ -2741,23 +2909,24 @@ def export_jobs_summary_pdf(
         c.drawString(margin, y, "HR Summary")
         y -= 20
         
-        # Table headers
-        headers = ["HR Name", "Candidates", "Activities", "Joined", "Rejected", "Total Activity"]
-        col_widths = [150, 70, 70, 60, 60, 80]
+        # Table headers - Include all statuses with Jobs Assigned, better column widths
+        # Total width: 612 (letter) - 80 (margins) = 532 available
+        headers = ["HR Name", "Jobs", "Candidates", "Act...", "Sourced", "Scrr..", "Lined", "Turned", "Offer...", "Joined", "Rejected", "Total..."]
+        col_widths = [85, 38, 38, 38, 38, 38, 38, 38, 42, 38, 38, 42]
         
-        c.setFont("Helvetica-Bold", 8)
+        c.setFont("Helvetica-Bold", 7)
         c.setFillColor(colors.HexColor("#0f172a"))
         x = margin
         for i, header in enumerate(headers):
-            c.drawString(x, y, header[:15])
+            c.drawString(x, y, header)
             x += col_widths[i]
-        y -= 15
+        y -= 12
         
         c.setStrokeColor(colors.HexColor("#e2e8f0"))
         c.line(margin, y, width - margin, y)
         y -= 10
         
-        # Table rows - Show ALL data (no truncation)
+        # Table rows - Show all statuses with truncation
         c.setFont("Helvetica", 7)
         c.setFillColor(colors.black)
         for row in hr_summary:
@@ -2766,13 +2935,13 @@ def export_jobs_summary_pdf(
                 _draw_header_footer(c, title, subtitle)
                 y = height - 110
                 # Redraw headers
-                c.setFont("Helvetica-Bold", 8)
+                c.setFont("Helvetica-Bold", 7)
                 c.setFillColor(colors.HexColor("#0f172a"))
                 x = margin
                 for i, header in enumerate(headers):
-                    c.drawString(x, y, header[:15])
+                    c.drawString(x, y, header)
                     x += col_widths[i]
-                y -= 15
+                y -= 12
                 c.setStrokeColor(colors.HexColor("#e2e8f0"))
                 c.line(margin, y, width - margin, y)
                 y -= 10
@@ -2780,19 +2949,47 @@ def export_jobs_summary_pdf(
                 c.setFillColor(colors.black)
             
             x = margin
-            hr_name = str(row.get("hr_name", ""))[:20]
+            hr_name = str(row.get("hr_name", ""))
+            # Truncate HR name if too long
+            if len(hr_name) > 12:
+                hr_name = hr_name[:9] + "..."
+            jobs_assigned = str(row.get("jobs_assigned", 0))
+            candidates = str(row.get("candidate_count", 0))
+            activities = str(row.get("activity_count", 0))
+            sourced = str(row.get("sourced", 0))
+            screened = str(row.get("screened", 0))
+            lined_up = str(row.get("lined_up", 0))
+            turned_up = str(row.get("turned_up", 0))
+            offer_accepted = str(row.get("offer_accepted", 0))
+            joined = str(row.get("joined", 0))
+            rejected = str(row.get("rejected", 0))
+            total_activity = str(row.get("total_activity", 0))
+            
+            # Draw all values
             c.drawString(x, y, hr_name)
             x += col_widths[0]
-            c.drawString(x, y, str(row.get("candidate_count", 0)))
+            c.drawString(x, y, jobs_assigned)
             x += col_widths[1]
-            c.drawString(x, y, str(row.get("activity_count", 0)))
+            c.drawString(x, y, candidates)
             x += col_widths[2]
-            c.drawString(x, y, str(row.get("joined", 0)))
+            c.drawString(x, y, activities)
             x += col_widths[3]
-            c.drawString(x, y, str(row.get("rejected", 0)))
+            c.drawString(x, y, sourced)
             x += col_widths[4]
-            c.drawString(x, y, str(row.get("total_activity", 0)))
-            y -= 12
+            c.drawString(x, y, screened)
+            x += col_widths[5]
+            c.drawString(x, y, lined_up)
+            x += col_widths[6]
+            c.drawString(x, y, turned_up)
+            x += col_widths[7]
+            c.drawString(x, y, offer_accepted)
+            x += col_widths[8]
+            c.drawString(x, y, joined)
+            x += col_widths[9]
+            c.drawString(x, y, rejected)
+            x += col_widths[10]
+            c.drawString(x, y, total_activity)
+            y -= 11
 
     c.showPage()
     _draw_header_footer(c, title, subtitle)

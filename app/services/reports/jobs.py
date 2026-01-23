@@ -3314,8 +3314,168 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
                 "total_activity": total_activity,
             })
     
+    # Get jobs assigned count per HR (before using it)
+    hr_jobs_assigned_data = (
+        db.query(
+            UserJobsAssigned.user_id,
+            func.count(func.distinct(UserJobsAssigned.job_id)).label('jobs_assigned_count')
+        )
+        .filter(
+            UserJobsAssigned.job_id.in_(job_ids),
+            UserJobsAssigned.user_id.isnot(None)
+        )
+        .group_by(UserJobsAssigned.user_id)
+        .all()
+    )
+    hr_jobs_assigned_map = {hr_id: count for hr_id, count in hr_jobs_assigned_data}
+    
+    # Also include HRs who have jobs assigned but no activities
+    for hr_id in hr_jobs_assigned_map.keys():
+        if hr_id not in hr_user_ids and hr_id not in set(list(hr_joined_map.keys()) + list(hr_rejected_map.keys())):
+            user = db.query(User).filter(User.id == hr_id).first()
+            hr_name = user.name if user else f"User {hr_id}"
+            hr_summary.append({
+                "hr_id": hr_id,
+                "hr_name": hr_name,
+                "candidate_count": 0,
+                "activity_count": 0,
+                "joined": 0,
+                "rejected": 0,
+                "total_activity": 0,
+            })
+    
     # Sort HRs by total activity (descending)
     hr_summary.sort(key=lambda x: x["total_activity"], reverse=True)
+    
+    # Get tag-based counts per HR for HR Summary
+    hr_tag_counts = {}
+    for tag, tag_key in [
+        (PipelineStageStatusTag.SOURCING, "sourced"),
+        (PipelineStageStatusTag.SCREENING, "screened"),
+        (PipelineStageStatusTag.LINE_UPS, "lined_up"),
+        (PipelineStageStatusTag.TURN_UPS, "turned_up"),
+        (PipelineStageStatusTag.OFFER_ACCEPTED, "offer_accepted"),
+    ]:
+        tag_data = (
+            db.query(
+                CandidateActivity.user_id,
+                func.count(func.distinct(CandidateActivity.candidate_id)).label('count')
+            )
+            .join(CandidateJobs, CandidateActivity.candidate_id == CandidateJobs.candidate_id)
+            .join(
+                PipelineStageStatus,
+                and_(
+                    CandidateActivity.remark.isnot(None),
+                    PipelineStageStatus.option.isnot(None),
+                    func.LOWER(func.trim(CandidateActivity.remark)) == func.LOWER(func.trim(PipelineStageStatus.option))
+                )
+            )
+            .filter(
+                CandidateJobs.job_id.in_(job_ids),
+                CandidateActivity.user_id.isnot(None),
+                CandidateActivity.type == CandidateActivityType.status,
+                CandidateActivity.created_at >= date_start,
+                CandidateActivity.created_at < date_end,
+                cast(PipelineStageStatus.tag, String) == tag.value
+            )
+            .group_by(CandidateActivity.user_id)
+            .all()
+        )
+        for user_id, count in tag_data:
+            if user_id not in hr_tag_counts:
+                hr_tag_counts[user_id] = {}
+            hr_tag_counts[user_id][tag_key] = count
+    
+    # Update HR summary with tag counts and jobs assigned
+    for hr in hr_summary:
+        hr_id = hr["hr_id"]
+        tag_data = hr_tag_counts.get(hr_id, {})
+        hr["sourced"] = tag_data.get("sourced", 0)
+        hr["screened"] = tag_data.get("screened", 0)
+        hr["lined_up"] = tag_data.get("lined_up", 0)
+        hr["turned_up"] = tag_data.get("turned_up", 0)
+        hr["offer_accepted"] = tag_data.get("offer_accepted", 0)
+        hr["jobs_assigned"] = hr_jobs_assigned_map.get(hr_id, 0)
+    
+    # Find best performing job (job with most total activity)
+    best_job = None
+    if jobs_summary:
+        best_job = jobs_summary[0]  # Already sorted by total_activity descending
+        best_performing_job_data = {
+            "job_id": best_job["job_id"],
+            "job_title": best_job["job_title"],
+            "company_name": best_job["company_name"],
+            "sourced": best_job["sourced"],
+            "screened": best_job["screened"],
+            "lined_up": best_job["lined_up"],
+            "turned_up": best_job["turned_up"],
+            "offer_accepted": best_job["offer_accepted"],
+            "joined": best_job["joined"],
+            "rejected": best_job["rejected"],
+        }
+    else:
+        best_performing_job_data = {
+            "job_id": None,
+            "job_title": "N/A",
+            "company_name": "N/A",
+            "sourced": 0,
+            "screened": 0,
+            "lined_up": 0,
+            "turned_up": 0,
+            "offer_accepted": 0,
+            "joined": 0,
+            "rejected": 0,
+        }
+    
+    # Get number of recruiters per job for "Jobs and Recruiters" table
+    jobs_and_recruiters = []
+    for job in jobs:
+        # Count distinct recruiters (users) who have activities or created candidate jobs for this job
+        job_candidate_jobs = [cj for cj in candidate_jobs if cj.job_id == job.id]
+        job_candidate_ids = [cj.candidate_id for cj in job_candidate_jobs]
+        
+        # Get recruiters from activities
+        recruiter_ids_from_activities = set()
+        if job_candidate_ids:
+            activity_recruiters = (
+                db.query(func.distinct(CandidateActivity.user_id))
+                .filter(
+                    CandidateActivity.candidate_id.in_(job_candidate_ids),
+                    CandidateActivity.user_id.isnot(None),
+                    CandidateActivity.created_at >= date_start,
+                    CandidateActivity.created_at < date_end
+                )
+                .all()
+            )
+            recruiter_ids_from_activities = {r[0] for r in activity_recruiters if r[0]}
+        
+        # Get recruiters from candidate assignments (assigned_to)
+        recruiter_ids_from_assignments = set()
+        if job_candidate_ids:
+            assigned_recruiters = (
+                db.query(func.distinct(Candidates.assigned_to))
+                .filter(
+                    Candidates.candidate_id.in_(job_candidate_ids),
+                    Candidates.assigned_to.isnot(None)
+                )
+                .all()
+            )
+            recruiter_ids_from_assignments = {r[0] for r in assigned_recruiters if r[0]}
+        
+        # Combine both sets
+        all_recruiter_ids = recruiter_ids_from_activities | recruiter_ids_from_assignments
+        num_recruiters = len(all_recruiter_ids)
+        
+        company_info = companies.get(job.company_id, {"name": f"Company {job.company_id}", "location": ""})
+        jobs_and_recruiters.append({
+            "job_id": job.job_id,
+            "job_title": job.title,
+            "company_name": company_info["name"],
+            "num_recruiters": num_recruiters,
+        })
+    
+    # Sort by number of recruiters (descending)
+    jobs_and_recruiters.sort(key=lambda x: x["num_recruiters"], reverse=True)
 
     return {
         "summary_tiles": summary_tiles,
@@ -3323,12 +3483,14 @@ def build_jobs_summary_report(db: Session, from_date: date, to_date: date) -> Di
         "company_summary": company_summary,
         "hr_summary": hr_summary,
         "daily_breakdown": daily_breakdown,
+        "jobs_and_recruiters": jobs_and_recruiters,
         "charts": {
             "tag_by_job": tag_by_job,
             "daily_tag_trends": daily_tag_trends,
             "daily_tag_trends_by_company": daily_tag_trends_by_company,  # For Excel export with company breakdown
             "company_performance": company_performance,
             "daily_joined_rejected": daily_joined_rejected,
+            "best_performing_job": best_performing_job_data,
         },
         "date_range": {
             "from_date": from_date.isoformat(),
