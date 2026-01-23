@@ -405,6 +405,7 @@ def jobs_summary_report(
             payload.get("charts", {}),
             generated_by=user.name if user else "",
             date_range=(from_date, to_date),
+            jobs_and_recruiters=payload.get("jobs_and_recruiters", []),
         )
         filename = f"{base_name}.pdf"
         mime = "application/pdf"
